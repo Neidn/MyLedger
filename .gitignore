@@ -10,3 +10,4 @@ backups/
 data/
 coverage/
 *.log
+*.tsbuildinfo
