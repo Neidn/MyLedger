@@ -2,8 +2,8 @@ FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 # Native dependency better-sqlite3 needs a compiler only if a prebuilt binary is unavailable.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
-COPY package.json ./
-RUN npm install --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
 FROM node:22-bookworm-slim AS build
 WORKDIR /app

@@ -20,7 +20,7 @@ export function createPostings(command: PostingCommand): Posting[] {
     const amount = positiveKrw(command.amountKrw);
     if (command.fromAccountId === command.toAccountId) throw new Error('동일 계좌 이체는 허용되지 않습니다.');
     postings = [[command.fromAccountId, -amount], [command.toAccountId, amount]];
-  } else {
+  } else if (command.kind === 'prepaid_topup') {
     const paid = positiveKrw(command.paidAmountKrw);
     const face = positiveKrw(command.faceAmountKrw);
     if (face < paid) throw new Error('충전 액면은 실제 결제 금액 이상이어야 합니다.');
@@ -28,6 +28,8 @@ export function createPostings(command: PostingCommand): Posting[] {
     postings = bonus
       ? [[command.fromAccountId, -paid], [command.prepaidAccountId, face], ['SYS:benefit', -bonus]]
       : [[command.fromAccountId, -paid], [command.prepaidAccountId, face]];
+  } else {
+    throw new Error('지원하지 않는 원장 유형입니다.');
   }
   if (postings.reduce((sum, [, delta]) => sum + delta, 0) !== 0) throw new Error('원장 합계가 0원이 아닙니다.');
   return postings;
