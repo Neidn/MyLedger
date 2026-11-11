@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.env
+.env.local
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+backups/
+data/
+coverage/
+*.log

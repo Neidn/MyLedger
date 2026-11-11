@@ -1,0 +1,30 @@
+name: my-ledger
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: my-ledger:local
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DB_DRIVER: sqlite
+      SQLITE_PATH: /app/data/ledger.sqlite
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    volumes:
+      - ledger_data:/app/data
+      - ledger_backups:/app/backups
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  ledger_data:
+  ledger_backups:

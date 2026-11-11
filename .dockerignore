@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.env
+.env.local
+backups
+coverage
