@@ -11,3 +11,7 @@ coverage
 .claude
 .idea
 .github
+# Not needed in the image; excluding them keeps doc/test-only commits from busting the build cache.
+docs
+tests
+*.md
