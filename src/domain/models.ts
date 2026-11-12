@@ -7,6 +7,10 @@ export interface Account {
   type: AccountType;
   balanceKrw: number;
   createdAt: string;
+  /** Archived accounts are hidden and accept no new postings; history stays intact. */
+  archivedAt: string | null;
+  /** True while the account has nothing but its opening balance, i.e. it can be deleted as a mistake. */
+  deletable: boolean;
 }
 
 export type TransactionCommand =
@@ -45,6 +49,7 @@ export interface Replenishment {
 
 export interface Dashboard {
   accounts: Account[];
+  archivedAccounts: Account[];
   transactions: Transaction[];
   replenishments: Replenishment[];
   totals: {

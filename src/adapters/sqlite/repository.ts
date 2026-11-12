@@ -7,7 +7,7 @@ import type { LedgerRepository } from '@/domain/ports';
 import { allocatePrepaidCost, kstToday, nonnegativeKrw, positiveKrw, shortText, validateDate } from '@/domain/money';
 import { badRequest, conflict, notFound } from '@/lib/errors';
 
-type AccountRow = { id: string; name: string; type: AccountType; created_at: string };
+type AccountRow = { id: string; name: string; type: AccountType; created_at: string; archived_at: string | null };
 type TxRow = { id: string; kind: Transaction['kind']; category: string | null; note: string | null; occurred_on: string; created_at: string };
 type LotRow = { id: string; remaining_face: number; remaining_paid: number };
 type ReplenishmentRow = {
@@ -39,14 +39,68 @@ export class SqliteLedgerRepository implements LedgerRepository {
   }
 
   listAccounts(): Account[] {
+    // deletable: nothing but opening-balance entries and no replenishment links.
     const rows = this.db.prepare(`
-      SELECT a.id, a.name, a.type, a.created_at,
-             COALESCE(SUM(e.amount_krw), 0) AS balance_krw
-      FROM accounts a LEFT JOIN entries e ON e.account_id = a.id
+      SELECT a.id, a.name, a.type, a.created_at, a.archived_at,
+             COALESCE((SELECT SUM(e.amount_krw) FROM entries e WHERE e.account_id = a.id), 0) AS balance_krw,
+             CASE WHEN EXISTS (SELECT 1 FROM entries e JOIN transactions t ON t.id = e.transaction_id
+                               WHERE e.account_id = a.id AND t.kind <> 'opening')
+                    OR EXISTS (SELECT 1 FROM replenishments r
+                               WHERE r.protected_account_id = a.id OR r.destination_account_id = a.id)
+                  THEN 0 ELSE 1 END AS deletable
+      FROM accounts a
       WHERE a.is_system = 0
-      GROUP BY a.id ORDER BY a.created_at, a.id
-    `).all() as Array<AccountRow & { balance_krw: number }>;
-    return rows.map((r) => ({ id: r.id, name: r.name, type: r.type, balanceKrw: r.balance_krw, createdAt: r.created_at }));
+      ORDER BY a.created_at, a.id
+    `).all() as Array<AccountRow & { balance_krw: number; deletable: number }>;
+    return rows.map((r) => ({
+      id: r.id, name: r.name, type: r.type, balanceKrw: r.balance_krw, createdAt: r.created_at,
+      archivedAt: r.archived_at, deletable: r.deletable === 1,
+    }));
+  }
+
+  renameAccount(id: string, name: string): Account {
+    this.findAccount(id);
+    const clean = shortText(name, 50, '계좌 이름');
+    if (!clean) badRequest('계좌 이름을 입력하세요.');
+    this.db.prepare('UPDATE accounts SET name=? WHERE id=?').run(clean, id);
+    return this.getAccount(id);
+  }
+
+  archiveAccount(id: string): Account {
+    const execute = this.db.transaction(() => {
+      const account = this.findAccount(id);
+      if (account.archived_at) return;
+      const { balance } = this.db.prepare('SELECT COALESCE(SUM(amount_krw),0) AS balance FROM entries WHERE account_id=?').get(id) as { balance: number };
+      if (balance !== 0) conflict('잔액이 0원인 계좌만 보관할 수 있습니다. 먼저 다른 계좌로 옮기세요.');
+      const { owed } = this.db.prepare(`SELECT COUNT(*) AS owed FROM replenishments
+        WHERE protected_account_id=? AND principal_amount > repaid_amount`).get(id) as { owed: number };
+      if (owed > 0) conflict('보충이 남아 있는 계좌는 보관할 수 없습니다.');
+      this.db.prepare('UPDATE accounts SET archived_at=? WHERE id=?').run(new Date().toISOString(), id);
+    });
+    execute.immediate();
+    return this.getAccount(id);
+  }
+
+  unarchiveAccount(id: string): Account {
+    this.findAccount(id);
+    this.db.prepare('UPDATE accounts SET archived_at=NULL WHERE id=?').run(id);
+    return this.getAccount(id);
+  }
+
+  deleteAccount(id: string): void {
+    const execute = this.db.transaction(() => {
+      if (!this.getAccount(id).deletable) conflict('거래 기록이 있는 계좌는 삭제할 수 없습니다. 대신 보관하세요.');
+      // Only opening transactions reference it (account + SYS:opening), so removing them
+      // keeps every remaining transaction balanced.
+      const openings = this.db.prepare('SELECT DISTINCT transaction_id AS id FROM entries WHERE account_id=?').all(id) as Array<{ id: string }>;
+      this.db.prepare('DELETE FROM prepaid_lots WHERE account_id=?').run(id);
+      for (const tx of openings) {
+        this.db.prepare('DELETE FROM entries WHERE transaction_id=?').run(tx.id);
+        this.db.prepare('DELETE FROM transactions WHERE id=?').run(tx.id);
+      }
+      this.db.prepare('DELETE FROM accounts WHERE id=?').run(id);
+    });
+    execute.immediate();
   }
 
   createAccount(input: { name: string; type: AccountType; openingBalanceKrw: number }): Account {
@@ -69,7 +123,7 @@ export class SqliteLedgerRepository implements LedgerRepository {
       }
     });
     execute.immediate();
-    return this.listAccounts().find((a) => a.id === id)!;
+    return this.getAccount(id);
   }
 
   postTransaction(command: TransactionCommand, idempotencyKey?: string): Transaction {
@@ -186,11 +240,13 @@ export class SqliteLedgerRepository implements LedgerRepository {
   }
 
   getDashboard(): Dashboard {
-    const accounts = this.listAccounts();
+    const all = this.listAccounts();
+    const accounts = all.filter((a) => !a.archivedAt);
+    const archivedAccounts = all.filter((a) => a.archivedAt);
     const replenishments = this.listReplenishments();
     const sum = (filter: (a: Account) => boolean) => accounts.filter(filter).reduce((n, a) => n + a.balanceKrw, 0);
     return {
-      accounts, transactions: this.listTransactions(30), replenishments,
+      accounts, archivedAccounts, transactions: this.listTransactions(30), replenishments,
       totals: {
         assetBalanceKrw: sum(() => true),
         liquidBalanceKrw: sum((a) => a.type === 'bank' || a.type === 'cash'),
@@ -200,9 +256,23 @@ export class SqliteLedgerRepository implements LedgerRepository {
     };
   }
 
-  private requireAccount(id: string): AccountRow {
-    const account = this.db.prepare('SELECT id,name,type,created_at FROM accounts WHERE id=? AND is_system=0').get(id) as AccountRow | undefined;
+  /** Any user account, archived or not — for account management. */
+  private findAccount(id: string): AccountRow {
+    const account = this.db.prepare('SELECT id,name,type,created_at,archived_at FROM accounts WHERE id=? AND is_system=0').get(id) as AccountRow | undefined;
     if (!account) notFound('계좌를 찾을 수 없습니다.');
+    return account;
+  }
+
+  private getAccount(id: string): Account {
+    const account = this.listAccounts().find((a) => a.id === id);
+    if (!account) notFound('계좌를 찾을 수 없습니다.');
+    return account;
+  }
+
+  /** An account that may take new postings. */
+  private requireAccount(id: string): AccountRow {
+    const account = this.findAccount(id);
+    if (account.archived_at) conflict(`보관된 계좌(${account.name})에는 거래를 등록할 수 없습니다. 먼저 복원하세요.`);
     return account;
   }
 

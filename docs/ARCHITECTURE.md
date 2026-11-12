@@ -37,8 +37,9 @@ src/
     sqlite/repository.ts      # SQLite Adapter
     postgres/README.md       # PostgreSQL Adapter 구현 지점
   lib/repository.ts           # 생성/주입
-sql/001_init.sql              # SQLite 스키마
-scripts/migrate.mjs           # 부팅 시 schema version 검증/설치
+sql/NNN_*.sql                 # SQLite 스키마 (001_init, 002_account_archive, ...)
+scripts/migrations.mjs        # user_version 기반 순차 마이그레이션
+scripts/migrate.mjs           # 부팅 시 schema version 검증/업그레이드
 scripts/backup.mjs            # SQLite 온라인 백업
 ```
 

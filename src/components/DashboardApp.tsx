@@ -40,6 +40,9 @@ export default function DashboardApp() {
   const [repaySourceId, setRepaySourceId] = useState('');
   const [repayAmount, setRepayAmount] = useState('');
 
+  const [editingId, setEditingId] = useState('');
+  const [editName, setEditName] = useState('');
+
   const load = useCallback(async () => {
     const data = await jsonRequest<Dashboard>('/api/dashboard');
     setDashboard(data);
@@ -49,7 +52,7 @@ export default function DashboardApp() {
     load().catch((e: Error) => setError(e.message));
   }, [load]);
 
-  async function apply<T>(action: () => Promise<T>, onSuccess: string) {
+  async function apply<T>(action: () => Promise<T>, onSuccess: string): Promise<boolean> {
     setBusy(true);
     setError('');
     setMessage('');
@@ -57,14 +60,18 @@ export default function DashboardApp() {
       await action();
       await load();
       setMessage(onSuccess);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : '처리 중 오류가 발생했습니다.');
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
   const accounts = dashboard?.accounts || [];
+  const archivedAccounts = dashboard?.archivedAccounts || [];
+  const owesReplenishment = (id: string) => !!dashboard?.replenishments.some((r) => r.protectedAccountId === id && r.remainingKrw > 0);
   const nonPrepaid = accounts.filter((a) => a.type !== 'prepaid');
   const prepaid = accounts.filter((a) => a.type === 'prepaid');
   const fromOptions = kind === 'income' ? nonPrepaid : kind === 'expense' ? accounts : nonPrepaid;
@@ -110,6 +117,30 @@ export default function DashboardApp() {
     setRepayAmount('');
   }
 
+  const accountUrl = (id: string) => `/api/accounts/${encodeURIComponent(id)}`;
+
+  async function renameAccount(event: FormEvent, id: string) {
+    event.preventDefault();
+    const ok = await apply(() => jsonRequest(accountUrl(id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: editName }),
+    }), '계좌 이름을 변경했습니다.');
+    if (ok) setEditingId('');
+  }
+
+  async function setArchived(account: Account, archived: boolean) {
+    await apply(() => jsonRequest(accountUrl(account.id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived }),
+    }), archived ? `'${account.name}' 계좌를 보관했습니다.` : `'${account.name}' 계좌를 복원했습니다.`);
+  }
+
+  async function deleteAccount(account: Account) {
+    if (!window.confirm(`'${account.name}' 계좌를 삭제할까요?\n초기 잔액 기록도 함께 지워지며 되돌릴 수 없습니다.`)) return;
+    await apply(() => jsonRequest(accountUrl(account.id), { method: 'DELETE' }), `'${account.name}' 계좌를 삭제했습니다.`);
+  }
+
+  const archiveBlockedReason = (a: Account) =>
+    a.balanceKrw !== 0 ? '잔액이 0원이어야 보관할 수 있습니다' : owesReplenishment(a.id) ? '보충이 남아 있어 보관할 수 없습니다' : '';
+
   const entryText = (entry: { accountName: string; amountKrw: number }) => `${entry.accountName} ${entry.amountKrw > 0 ? '+' : ''}${won(entry.amountKrw)}`;
 
   return <div className="container">
@@ -140,9 +171,40 @@ export default function DashboardApp() {
           <h2>계좌 잔액</h2>
           {accounts.length === 0 ? <div className="empty">먼저 계좌를 생성해 주세요.</div> : accounts.map((a: Account) =>
             <div className="list-row" key={a.id}>
-              <div><div className="list-name">{a.name}</div><div className="list-sub"><span className={`badge ${a.type === 'prepaid' ? 'prepaid' : ''}`}>{typeLabel[a.type]}</span></div></div>
+              <div style={{ minWidth: 0 }}>
+                {editingId === a.id
+                  ? <form className="row-inline" onSubmit={(e) => renameAccount(e, a.id)}>
+                    <div className="field"><input aria-label="새 계좌 이름" required maxLength={50} autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} /></div>
+                    <button className="btn small" type="submit" disabled={busy || !editName.trim()}>저장</button>
+                    <button className="btn small secondary" type="button" onClick={() => setEditingId('')}>취소</button>
+                  </form>
+                  : <>
+                    <div className="list-name">{a.name}</div>
+                    <div className="list-sub"><span className={`badge ${a.type === 'prepaid' ? 'prepaid' : ''}`}>{typeLabel[a.type]}</span></div>
+                    <div className="account-actions">
+                      <button className="btn small secondary" type="button" disabled={busy} onClick={() => { setEditingId(a.id); setEditName(a.name); }}>이름 변경</button>
+                      <button className="btn small secondary" type="button" disabled={busy || !!archiveBlockedReason(a)} title={archiveBlockedReason(a) || '목록에서 숨기고 거래 등록을 막습니다'} onClick={() => setArchived(a, true)}>보관</button>
+                      {a.deletable && <button className="btn small danger" type="button" disabled={busy} title="초기 잔액 외 거래가 없는 계좌만 삭제할 수 있습니다" onClick={() => deleteAccount(a)}>삭제</button>}
+                    </div>
+                  </>}
+              </div>
               <div className="money">{won(a.balanceKrw)}</div>
             </div>)}
+          {archivedAccounts.length > 0 && <details className="archived">
+            <summary>보관된 계좌 {archivedAccounts.length}개</summary>
+            {archivedAccounts.map((a) => <div className="list-row" key={a.id}>
+              <div style={{ minWidth: 0 }}>
+                <div className="list-name">{a.name}</div>
+                <div className="list-sub"><span className="badge">{typeLabel[a.type]}</span> 보관됨 · 거래 기록은 유지됩니다</div>
+                <div className="account-actions">
+                  <button className="btn small secondary" type="button" disabled={busy} onClick={() => setArchived(a, false)}>복원</button>
+                  {a.deletable && <button className="btn small danger" type="button" disabled={busy} onClick={() => deleteAccount(a)}>삭제</button>}
+                </div>
+              </div>
+              <div className="money">{won(a.balanceKrw)}</div>
+            </div>)}
+          </details>}
+          <div className="panel-note" style={{ marginTop: 12 }}>삭제는 초기 잔액 외 거래가 없는 계좌(잘못 만든 계좌)만 가능합니다. 거래가 있는 계좌는 잔액을 0원으로 옮긴 뒤 보관하세요.</div>
         </section>
 
         <section className="panel">

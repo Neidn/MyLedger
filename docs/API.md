@@ -16,8 +16,10 @@
 ### `GET /api/accounts`
 
 ```json
-{ "accounts": [{ "id": "uuid", "name": "생활비", "type": "bank", "balanceKrw": 600000 }] }
+{ "accounts": [{ "id": "uuid", "name": "생활비", "type": "bank", "balanceKrw": 600000, "createdAt": "…", "archivedAt": null, "deletable": false }] }
 ```
+
+보관된 계좌도 포함한다(`archivedAt` 값 존재). `GET /api/dashboard`는 `accounts`(활성)와 `archivedAccounts`(보관)로 나눠 반환한다. `deletable`은 초기 잔액 외 거래와 보충 연결이 없을 때 `true`.
 
 ### `POST /api/accounts`
 
@@ -26,6 +28,23 @@
 ```
 
 허용 type: `bank`, `savings`, `cash`, `prepaid`. 선결제 시작 잔액이 있으면 100% 실결제된 기존 충전 잔액 lot으로 해석한다. 보너스가 포함된 실제 충전 내역을 복원하려면 초기 잔액 대신 개별 충전 데이터 마이그레이션이 필요하다.
+
+### `PATCH /api/accounts/{id}`
+
+```json
+{ "name": "월급 통장" }
+{ "archived": true }
+{ "archived": false }
+```
+
+- `name`: 이름만 변경(1~50자). 잔액·원장에는 영향 없음.
+- `archived: true`: 잔액 0원이고 이 계좌로 갚아야 할 보충 의무가 없을 때만 보관(아니면 409). 보관된 계좌로의 새 거래는 409.
+- `archived: false`: 복원.
+- 응답: `{ "account": { … } }`. 둘 다 없으면 400.
+
+### `DELETE /api/accounts/{id}`
+
+잘못 만든 계좌 삭제. `deletable`(초기 잔액 외 거래·보충 연결 없음)일 때만 허용하며, 해당 개시 거래와 개시 lot도 함께 삭제한다. 거래가 있으면 409 — 대신 보관한다. 응답: `{ "deletedId": "uuid" }`.
 
 ### `GET /api/transactions?limit=50`
 
