@@ -34,7 +34,7 @@ docker compose up -d --build   # app at http://127.0.0.1:3000, health: /api/heal
 - `src/adapters/postgres/` — placeholder only. `src/lib/repository.ts` selects the adapter from `DB_DRIVER` (only `sqlite` works; anything else throws) and caches a singleton.
 - `src/app/api/*/route.ts` — thin HTTP layer: `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`, `try { ... } catch (e) { return apiError(e) }`. `_shared/http.ts` maps `DomainError` (400/404/409 from `src/lib/errors.ts`) and `DomainValidationError` to `{ error: { code, message } }`. Routes and domain must never import SQLite directly — go through `getRepository()`.
 - `src/components/DashboardApp.tsx` — the single client UI, calling the JSON API.
-- `sql/001_init.sql` — the schema. `scripts/migrate.mjs` applies it when `PRAGMA user_version = 0` and sets it to 1; any other version throws. Adding a schema change means adding a new numbered SQL file **and** extending the version handling in `migrate.mjs`. The Docker container runs the migration on every start.
+- `sql/NNN_*.sql` — the schema, applied in order by `scripts/migrations.mjs` (`MIGRATIONS` list, `migrate(db)`): `PRAGMA user_version` = number of files applied, each file runs in its own IMMEDIATE transaction with its version bump, and a DB newer than the list throws. A schema change = a new numbered SQL file appended to `MIGRATIONS` (never edit an applied one). `scripts/migrate.mjs` is the CLI wrapper; the Docker container runs it on every start, so deployed DBs upgrade in place.
 
 ## Domain invariants (see docs/DOMAIN_RULES.md)
 
@@ -47,7 +47,7 @@ docker compose up -d --build   # app at http://127.0.0.1:3000, health: /api/heal
 
 ## Testing notes
 
-- `tests/money.test.ts` and `tests/postings.test.ts` are pure unit tests. `tests/sqlite.integration.test.ts` builds a temp DB from `sql/001_init.sql` and exercises `SqliteLedgerRepository` end to end.
+- `tests/money.test.ts` and `tests/postings.test.ts` are pure unit tests. `tests/*.integration.test.ts` build a temp DB with `migrate()` from `scripts/migrations.mjs` (so tests see the real schema) and exercise `SqliteLedgerRepository` end to end.
 - Imports use the `@/*` → `src/*` path alias.
 
 ## Ops constraints

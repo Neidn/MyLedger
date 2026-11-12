@@ -37,6 +37,12 @@ button:disabled { cursor: not-allowed; opacity: .6; }
 .full { grid-column: 1 / -1; }
 .btn { background:#f1d78d; color:#4b402c; font-weight:750; border:0; border-radius:10px; padding:11px 14px; margin-top:8px; }
 .btn.secondary { background:#f1f0ea; color:#615e53; }
+.btn.small { padding:5px 9px; margin-top:0; font-size:12px; font-weight:650; border-radius:8px; }
+.btn.danger { background:#fff0ee; color:#a34a42; }
+.btn:disabled { opacity:.45; cursor:not-allowed; }
+.account-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.archived { margin-top:14px; border-top:1px solid #f0eee7; padding-top:10px; }
+.archived summary { cursor:pointer; font-size:13px; color:#7b776e; }
 .row-inline { display:flex; gap:8px; align-items:end; flex-wrap:wrap; }
 .row-inline .field { flex:1; min-width:110px; }
 .notice { background:#fff8e7; color:#84683f; font-size:12px; border-radius:11px; padding:10px 12px; margin:10px 0 0; }

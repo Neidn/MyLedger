@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { SqliteLedgerRepository } from '../src/adapters/sqlite/repository';
+import { migrate } from '../scripts/migrations.mjs';
 
 test('SQLite contract: discounted topup, reimbursement and balanced postings', () => {
   const dir = mkdtempSync(join(tmpdir(), 'my-ledger-'));
@@ -12,7 +13,7 @@ test('SQLite contract: discounted topup, reimbursement and balanced postings', (
   try {
     const db = new Database(file);
     db.pragma('foreign_keys = ON');
-    db.exec(readFileSync(resolve('sql/001_init.sql'), 'utf8'));
+    migrate(db);
     db.close();
 
     const repo = new SqliteLedgerRepository(file);

@@ -84,8 +84,9 @@ src/domain/postings.ts   DB 독립 이중기입 원장 항목 생성
 src/adapters/sqlite/     better-sqlite3 구현체
 src/adapters/postgres/   나중에 연결할 어댑터 지점
 src/lib/repository.ts    DB_DRIVER 기반 구체 어댑터 주입
-sql/001_init.sql         DB 스키마
-scripts/migrate.mjs      스키마 설치
+sql/NNN_*.sql            DB 스키마 (순서대로 적용)
+scripts/migrations.mjs   user_version 기반 마이그레이션 목록/실행
+scripts/migrate.mjs      스키마 설치/업그레이드 CLI
 scripts/backup.mjs       온라인 백업
 ```
 
