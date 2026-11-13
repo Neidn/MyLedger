@@ -45,6 +45,10 @@ button:disabled { cursor: not-allowed; opacity: .6; }
 .account-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
 .archived { margin-top:14px; border-top:1px solid #f0eee7; padding-top:10px; }
 .archived summary { cursor:pointer; font-size:13px; color:#7b776e; }
+.list-row.cancelled .list-name { text-decoration:line-through; color:#a9a59c; }
+.badge.cancelled { background:#f1f0ea; color:#8d897f; }
+.badge.reversal { background:#fff0ee; color:#a34a42; }
+.tx-edit { width:100%; }
 .row-inline { display:flex; gap:8px; align-items:end; flex-wrap:wrap; }
 .row-inline .field { flex:1; min-width:110px; }
 .notice { background:#fff8e7; color:#84683f; font-size:12px; border-radius:11px; padding:10px 12px; margin:10px 0 0; }

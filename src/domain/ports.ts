@@ -1,4 +1,4 @@
-import type { Account, AccountType, Dashboard, Replenishment, Transaction, TransactionCommand } from './models';
+import type { Account, AccountType, Dashboard, Replenishment, Transaction, TransactionAmendment, TransactionCommand } from './models';
 
 /** DB-agnostic repository contract. Neither routes nor domain import SQLite/pg. */
 export interface LedgerRepository {
@@ -12,6 +12,10 @@ export interface LedgerRepository {
   deleteAccount(id: string): void;
   postTransaction(command: TransactionCommand, idempotencyKey?: string): Transaction;
   listTransactions(limit?: number): Transaction[];
+  /** Records a reversal (same kind, negated entries, original date). Returns the reversal. */
+  cancelTransaction(id: string, idempotencyKey?: string): Transaction;
+  /** Reverses the original and posts a corrected copy atomically. Returns the replacement. */
+  amendTransaction(id: string, changes: TransactionAmendment, idempotencyKey?: string): Transaction;
   listReplenishments(): Replenishment[];
   repayReplenishment(id: string, input: { fromAccountId: string; amountKrw: number; occurredOn?: string }, idempotencyKey?: string): Transaction;
   getDashboard(): Dashboard;
