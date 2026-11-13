@@ -94,6 +94,18 @@
 { "replenishments": [{ "id": "uuid", "protectedAccountName": "여행비", "principalKrw": 200000, "repaidKrw": 50000, "remainingKrw": 150000, "dueOn": "2026-11-25" }] }
 ```
 
+### `POST /api/transactions/{id}/cancel`
+
+거래 취소 = 역거래 기록(같은 유형, 원장 부호 반전, 원거래 날짜). 응답 201 `{ "transaction": <역거래> }`. 거래 목록의 각 항목은 `reversesTransactionId`(역거래일 때 원거래 id)와 `reversedByTransactionId`(취소된 거래일 때 역거래 id)를 가진다. 거부 조건은 DOMAIN_RULES §7. `Idempotency-Key` 지원.
+
+### `PATCH /api/transactions/{id}`
+
+```json
+{ "amountKrw": 5000, "note": "점심", "category": "식비", "occurredOn": "2026-11-10" }
+```
+
+거래 수정 = 원거래 취소 + 정정 거래 재등록(원자적). 생략한 값은 원거래 값을 유지한다. `prepaid_topup`은 `amountKrw`=실결제액, `faceAmountKrw`=액면. 계좌·유형은 바꿀 수 없다. 보충 거래와 초기 잔액은 400. 응답 `{ "transaction": <정정 거래> }`.
+
 ### `POST /api/replenishments/:id/repay`
 
 ```json

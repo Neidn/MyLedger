@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Personal household ledger (가계부): multiple accounts, income/expense, transfers, discounted prepaid top-ups, and "temporary withdrawal → replenishment" obligations. Next.js 16 (App Router) + React 19 + TypeScript + `better-sqlite3`. Local-only, **no authentication** — Compose binds to `127.0.0.1`; never expose it on `0.0.0.0`. Docs and user-facing/error messages are in Korean; keep that convention.
 
-Not yet implemented (don't assume they exist): auth, transaction edit/cancel/reversal, refunds, prepaid expiry, budgets, recurring expenses, cash-flow forecasting, PostgreSQL adapter.
+Not yet implemented (don't assume they exist): auth, refunds, prepaid expiry, card credit limits, budgets, recurring expenses, cash-flow forecasting, PostgreSQL adapter.
 
 ## Commands
 
@@ -42,7 +42,8 @@ docker compose up -d --build   # app at http://127.0.0.1:3000, health: /api/heal
 - Double entry: the entries of each transaction sum to 0. Balances are derived from entries. The system accounts `SYS:income`, `SYS:expense`, `SYS:benefit`, and `SYS:opening` balance the books and are excluded from user asset totals.
 - Prepaid top-up: `face >= paid`, `bonus = face - paid` is posted to `SYS:benefit`. Spends consume lots FIFO. Cost is allocated as `floor(used_face * remaining_paid / remaining_face)`, and the final spend of a lot takes the whole remainder (`allocatePrepaidCost`). Allocation-order changes belong in domain policy, not the adapter.
 - A replenishment obligation is created only within the same DB transaction as the flagged withdrawal transfer. `0 <= repaid <= principal`. Deposits never reduce an obligation automatically.
-- Confirmed transactions are never physically deleted; corrections are meant to be reversal entries (future work).
+- Confirmed transactions are never physically deleted. Cancel = a reversal row (same kind, negated entries, original `occurred_on`, `reverses_transaction_id` → original; unique, so once only) plus undoing side effects in `reverse()`: prepaid lots restored/zeroed, replenishment `cancelled_at` / `repaid_amount`. Amend = reverse + re-`post()` a command rebuilt from the original's entries, in one DB transaction. The only physical delete is `deleteAccount` for an account with nothing but its opening balance.
+- `card` accounts are liabilities: negative balance = bill owed, no balance check on spending, no income/outgoing transfer/repayment from them.
 - `occurred_on` is a KST `YYYY-MM-DD` date; `created_at` is a UTC ISO string. Never rely on the server's local timezone.
 
 ## Testing notes
