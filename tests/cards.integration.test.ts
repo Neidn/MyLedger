@@ -34,16 +34,17 @@ test('migration v3: rebuilds accounts to allow card without losing data or forei
   const dir = mkdtempSync(join(tmpdir(), 'my-ledger-cards-'));
   const file = join(dir, 'v2.sqlite');
   try {
-    const db = new Database(file);
-    db.pragma('foreign_keys = ON');
-    migrate(db, 2);
-    db.close();
-    const before = new SqliteLedgerRepository(file);
-    const bank = before.createAccount({ name: '생활비', type: 'bank', openingBalanceKrw: 100_000 });
-    before.archiveAccount(before.createAccount({ name: '옛 통장', type: 'cash', openingBalanceKrw: 0 }).id);
-
+    // Seed v2 rows with raw SQL: repository code always targets the latest schema.
     const upgrade = new Database(file);
     upgrade.pragma('foreign_keys = ON');
+    migrate(upgrade, 2);
+    upgrade.exec(`
+      INSERT INTO accounts(id,name,type,is_system,created_at) VALUES('BANK','생활비','bank',0,'2026-11-01T00:00:00.000Z');
+      INSERT INTO accounts(id,name,type,is_system,created_at,archived_at) VALUES('OLD','옛 통장','cash',0,'2026-11-01T00:00:00.000Z','2026-11-02T00:00:00.000Z');
+      INSERT INTO transactions(id,kind,note,occurred_on,created_at) VALUES('T1','opening','초기 잔액','2026-11-01','2026-11-01T00:00:00.000Z');
+      INSERT INTO entries(id,transaction_id,account_id,amount_krw) VALUES('E1','T1','BANK',100000),('E2','T1','SYS:opening',-100000);
+    `);
+    const bank = { id: 'BANK' };
     assert.deepEqual(migrate(upgrade), { from: 2, to: MIGRATIONS.length });
     assert.equal(upgrade.pragma('foreign_keys', { simple: true }), 1, 'foreign_keys restored after migration');
     assert.deepEqual(upgrade.pragma('foreign_key_check'), []);

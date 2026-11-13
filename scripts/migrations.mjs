@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 /** Ordered schema files. PRAGMA user_version = number of files applied. Append only. */
-export const MIGRATIONS = ['001_init.sql', '002_account_archive.sql', '003_card_accounts.sql'];
+export const MIGRATIONS = ['001_init.sql', '002_account_archive.sql', '003_card_accounts.sql', '004_transaction_reversal.sql'];
 
 const sqlDir = new URL('../sql/', import.meta.url);
 
