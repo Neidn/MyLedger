@@ -1,34 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import type { Account, AccountType, Dashboard, Transaction, TransactionKind } from '@/domain/models';
+import type { Account, AccountType, Dashboard, Transaction } from '@/domain/models';
 import AmountInput from './AmountInput';
-
-const won = (n: number) => `${n.toLocaleString('ko-KR')}원`;
-const typeLabel: Record<AccountType, string> = { bank: '은행', cash: '현금', savings: '저축', prepaid: '선결제', card: '카드' };
-const kindLabel: Record<TransactionKind, string> = {
-  opening: '초기 잔액', income: '수입', expense: '지출', transfer: '이체',
-  prepaid_topup: '할인 충전', replenishment_repayment: '계좌 보충',
-};
-
-/** Amounts as entered, recovered from the user-account entries (system legs are not listed). */
-function enteredAmounts(t: Transaction): { amount: number; face?: number } {
-  const entries = t.entries || [];
-  const out = entries.find((e) => e.amountKrw < 0)?.amountKrw ?? 0;
-  const into = entries.find((e) => e.amountKrw > 0)?.amountKrw ?? 0;
-  if (t.kind === 'prepaid_topup') return { amount: -out, face: into };
-  if (t.kind === 'expense') return { amount: -out };
-  return { amount: into };
-}
-
-async function jsonRequest<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, { cache: 'no-store', ...options });
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload?.error?.message || `요청 오류 (${response.status})`);
-  return payload as T;
-}
+import MonthlyView from './MonthlyView';
+import TransactionRow from './TransactionRow';
+import { CATEGORY_OPTIONS_ID, jsonRequest, kindLabel, typeLabel, won } from './ui';
 
 export default function DashboardApp() {
+  const [view, setView] = useState<'home' | 'monthly'>('home');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [categories, setCategories] = useState<string[]>([]);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -54,21 +36,27 @@ export default function DashboardApp() {
   const [editingId, setEditingId] = useState('');
   const [editName, setEditName] = useState('');
 
-  const [editingTxId, setEditingTxId] = useState('');
-  const [txAmount, setTxAmount] = useState('');
-  const [txFace, setTxFace] = useState('');
-  const [txNote, setTxNote] = useState('');
-  const [txCategory, setTxCategory] = useState('');
-  const [txDate, setTxDate] = useState('');
-
   const load = useCallback(async () => {
-    const data = await jsonRequest<Dashboard>('/api/dashboard');
+    const [data, cats] = await Promise.all([
+      jsonRequest<Dashboard>('/api/dashboard'),
+      jsonRequest<{ categories: string[] }>('/api/categories'),
+    ]);
     setDashboard(data);
+    setCategories(cats.categories);
   }, []);
 
   useEffect(() => {
     load().catch((e: Error) => setError(e.message));
   }, [load]);
+
+  // The tab follows the URL hash (#monthly), so it survives reloads and can be bookmarked.
+  useEffect(() => {
+    const sync = () => setView(window.location.hash === '#monthly' ? 'monthly' : 'home');
+    sync();
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
+  const showView = (next: 'home' | 'monthly') => { window.location.hash = next === 'monthly' ? 'monthly' : ''; setView(next); };
 
   async function apply<T>(action: () => Promise<T>, onSuccess: string): Promise<boolean> {
     setBusy(true);
@@ -77,6 +65,7 @@ export default function DashboardApp() {
     try {
       await action();
       await load();
+      setRefreshKey((n) => n + 1);
       setMessage(onSuccess);
       return true;
     } catch (e) {
@@ -162,25 +151,10 @@ export default function DashboardApp() {
 
   const txUrl = (id: string) => `/api/transactions/${encodeURIComponent(id)}`;
 
-  function startTxEdit(t: Transaction) {
-    const { amount, face } = enteredAmounts(t);
-    setEditingTxId(t.id);
-    setTxAmount(String(amount));
-    setTxFace(face !== undefined ? String(face) : '');
-    setTxNote(t.note || '');
-    setTxCategory(t.category || '');
-    setTxDate(t.occurredOn);
-  }
-
-  async function amendTransaction(event: FormEvent, t: Transaction) {
-    event.preventDefault();
-    const body: Record<string, unknown> = { amountKrw: Number(txAmount), note: txNote.trim(), occurredOn: txDate };
-    if (t.kind === 'prepaid_topup') body.faceAmountKrw = Number(txFace);
-    if (t.kind === 'income' || t.kind === 'expense') body.category = txCategory.trim();
-    const ok = await apply(() => jsonRequest(txUrl(t.id), {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body),
+  function amendTransaction(t: Transaction, changes: Record<string, unknown>) {
+    return apply(() => jsonRequest(txUrl(t.id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(changes),
     }), '거래를 수정했습니다. 원래 거래는 취소 기록으로 남습니다.');
-    if (ok) setEditingTxId('');
   }
 
   async function cancelTransaction(t: Transaction) {
@@ -193,14 +167,25 @@ export default function DashboardApp() {
   const archiveBlockedReason = (a: Account) =>
     a.balanceKrw !== 0 ? '잔액이 0원이어야 보관할 수 있습니다' : owesReplenishment(a.id) ? '보충이 남아 있어 보관할 수 없습니다' : '';
 
-  const entryText = (entry: { accountName: string; amountKrw: number }) => `${entry.accountName} ${entry.amountKrw > 0 ? '+' : ''}${won(entry.amountKrw)}`;
-
   return <div className="container">
     <header className="header">
       <div><div className="logo">내 가계부 <span style={{ fontSize: 18, color: '#e4be65' }}>✦</span></div><div className="subtitle">나의 돈 흐름을 한눈에</div></div>
       <div className="header-note">SQLite · 로컬 전용 MVP · 급여 주기 예측은 다음 단계</div>
     </header>
 
+    <nav className="tabs" role="tablist" aria-label="화면">
+      <button className="tab" role="tab" type="button" aria-selected={view === 'home'} onClick={() => showView('home')}>홈</button>
+      <button className="tab" role="tab" type="button" aria-selected={view === 'monthly'} onClick={() => showView('monthly')}>월별 내역</button>
+    </nav>
+
+    <datalist id={CATEGORY_OPTIONS_ID}>{categories.map((c) => <option key={c} value={c} />)}</datalist>
+
+    {message && <div className="message" role="status">{message}</div>}
+    {error && <div className="message error" role="alert">{error}</div>}
+
+    {view === 'monthly' && <MonthlyView busy={busy} refreshKey={refreshKey} onCancel={cancelTransaction} onAmend={amendTransaction} />}
+
+    {view === 'home' && <>
     <section className="hero">
       <div className="hero-title">내 전체 자산 · 충전금 액면 포함{hasCards ? ' · 카드 대금 차감' : ''}</div>
       <div className="hero-amount">{dashboard ? won(dashboard.totals.assetBalanceKrw) : '불러오는 중...'}</div>
@@ -214,9 +199,6 @@ export default function DashboardApp() {
       <div className="stat warning"><div className="label">다시 채워야 할 돈</div><div className="value">{won(dashboard?.totals.outstandingReplenishmentKrw || 0)}</div></div>
       {hasCards && <div className="stat card-due"><div className="label">카드 결제 예정</div><div className="value">{won(dashboard?.totals.cardOutstandingKrw || 0)}</div></div>}
     </section>
-
-    {message && <div className="message" role="status">{message}</div>}
-    {error && <div className="message error" role="alert">{error}</div>}
 
     <div className="columns">
       <div>
@@ -286,45 +268,8 @@ export default function DashboardApp() {
         <section className="panel">
           <h2>최근 거래</h2>
           {dashboard?.transactions.length === 0 && <div className="empty">등록된 거래가 없습니다.</div>}
-          {dashboard?.transactions.map((t) => {
-            const cancelled = !!t.reversedByTransactionId;
-            const isReversal = !!t.reversesTransactionId;
-            const changeable = !cancelled && !isReversal && t.kind !== 'opening';
-            return <div className={`list-row ${cancelled ? 'cancelled' : ''}`} key={t.id}>
-              <div style={{ minWidth: 0 }} className={editingTxId === t.id ? 'tx-edit' : ''}>
-                <div className="list-name">{t.note || t.category || kindLabel[t.kind]}</div>
-                <div className="list-sub">{t.occurredOn} · {kindLabel[t.kind]}
-                  {cancelled && <> <span className="badge cancelled">취소됨</span></>}
-                  {isReversal && <> <span className="badge reversal">취소 기록</span></>}
-                </div>
-                <div className="list-sub">{t.entries?.map(entryText).join(' / ')}</div>
-                {t.kind === 'expense' && !isReversal && t.realCostKrw !== null && t.realCostKrw !== undefined && <div className="list-sub">실질 부담액 {won(t.realCostKrw)}</div>}
-                {editingTxId === t.id
-                  ? <form onSubmit={(e) => amendTransaction(e, t)}>
-                    <div className="form-grid">
-                      <div className="field"><label htmlFor={`tx-amount-${t.id}`}>{t.kind === 'prepaid_topup' ? '실제 결제 금액 (원)' : '금액 (원)'}</label>
-                        <AmountInput id={`tx-amount-${t.id}`} required value={txAmount} onValueChange={setTxAmount} /></div>
-                      {t.kind === 'prepaid_topup' && <div className="field"><label htmlFor={`tx-face-${t.id}`}>충전 액면 금액 (원)</label>
-                        <AmountInput id={`tx-face-${t.id}`} required value={txFace} onValueChange={setTxFace} /></div>}
-                      {(t.kind === 'income' || t.kind === 'expense') && <div className="field"><label htmlFor={`tx-cat-${t.id}`}>항목</label>
-                        <input id={`tx-cat-${t.id}`} value={txCategory} onChange={(e) => setTxCategory(e.target.value)} /></div>}
-                      <div className="field"><label htmlFor={`tx-date-${t.id}`}>날짜</label>
-                        <input id={`tx-date-${t.id}`} type="date" required value={txDate} onChange={(e) => setTxDate(e.target.value)} /></div>
-                      <div className="field full"><label htmlFor={`tx-note-${t.id}`}>메모</label>
-                        <input id={`tx-note-${t.id}`} value={txNote} onChange={(e) => setTxNote(e.target.value)} /></div>
-                    </div>
-                    <div className="account-actions">
-                      <button className="btn small" type="submit" disabled={busy || !txAmount}>저장</button>
-                      <button className="btn small secondary" type="button" onClick={() => setEditingTxId('')}>닫기</button>
-                    </div>
-                  </form>
-                  : changeable && <div className="account-actions">
-                    {t.kind !== 'replenishment_repayment' && <button className="btn small secondary" type="button" disabled={busy} onClick={() => startTxEdit(t)}>수정</button>}
-                    <button className="btn small danger" type="button" disabled={busy} onClick={() => cancelTransaction(t)}>취소</button>
-                  </div>}
-              </div>
-            </div>;
-          })}
+          {dashboard?.transactions.map((t) => <TransactionRow key={t.id} t={t} busy={busy} onCancel={cancelTransaction} onAmend={amendTransaction} />)}
+          {!!dashboard?.transactions.length && <button className="btn small secondary" type="button" style={{ marginTop: 10 }} onClick={() => showView('monthly')}>월별 내역에서 전체 보기</button>}
         </section>
       </div>
 
@@ -355,7 +300,7 @@ export default function DashboardApp() {
               {kind === 'prepaid_topup' && <div className="field"><label htmlFor="face">충전 액면 금액 (원)</label>
                 <AmountInput id="face" required placeholder="100,000" value={faceAmount} onValueChange={setFaceAmount} /></div>}
               {(kind === 'expense' || kind === 'income') && <div className="field"><label htmlFor="category">항목 (선택)</label>
-                <input id="category" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="식비, 급여..." /></div>}
+                <input id="category" list={CATEGORY_OPTIONS_ID} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="식비, 급여..." /></div>}
               <div className="field full"><label htmlFor="note">메모 (선택)</label>
                 <input id="note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="거래 내용" /></div>
             </div>
@@ -387,10 +332,11 @@ export default function DashboardApp() {
 
         <section className="panel">
           <h2>예산과 미래 자금 흐름</h2>
-          <div className="notice">다음 개발 단계: 급여 주기, 고정비, 예정 계좌 보충, 날짜별 잔액 예측 및 통계를 구현할 예정입니다. 현재 화면에는 아직 예측값을 표시하지 않습니다.</div>
+          <div className="notice">다음 개발 단계: 급여 주기, 고정비, 예정 계좌 보충, 날짜별 잔액 예측을 구현할 예정입니다. 월별 지출·항목 통계는 '월별 내역' 탭에서 볼 수 있습니다.</div>
         </section>
       </div>
     </div>
+    </>}
     <footer className="footer">초기 개인용 스캐폴드입니다. 인증을 구현하기 전에는 인터넷에 공개하지 마세요. 거래 수정·취소는 역거래로 기록됩니다. 환불·만료 및 자동 예측은 아직 지원되지 않습니다.</footer>
   </div>;
 }

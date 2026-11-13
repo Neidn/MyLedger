@@ -5,10 +5,15 @@ import { apiError, asObject } from '../_shared/http';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/** Query: limit (default 50, max 500), month=YYYY-MM, q=text in note/category. */
 export function GET(request: NextRequest) {
   try {
-    const parsed = Number(request.nextUrl.searchParams.get('limit') || 50);
-    return NextResponse.json({ transactions: getRepository().listTransactions(parsed) });
+    const params = request.nextUrl.searchParams;
+    return NextResponse.json({ transactions: getRepository().listTransactions({
+      limit: Number(params.get('limit') || 50),
+      month: params.get('month') || undefined,
+      query: params.get('q') || undefined,
+    }) });
   } catch (error) { return apiError(error); }
 }
 
