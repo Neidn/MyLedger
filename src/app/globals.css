@@ -12,7 +12,9 @@ button:disabled { cursor: not-allowed; opacity: .6; }
 .hero { padding:25px 27px; background:#fffdfa; border:1px solid #e9e5d9; border-radius:18px; }
 .hero-title { font-size:13px; color:#77766b; }
 .hero-amount { margin:7px 0 1px; font-size:32px; font-weight:750; letter-spacing:-1.2px; }
-.stat-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:16px 0 24px; }
+.stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:16px 0 24px; }
+.stat.card-due { background:#f3f0fb; border-color:#e0d9f3; }
+.badge.card { background:#efeaf9; color:#5d4e8c; }
 .stat { background:#fff; border:1px solid #e8e5df; border-radius:16px; padding:17px 18px; }
 .stat .label { color:#77746e; font-size:12px; }
 .stat .value { font-size:21px; font-weight:750; padding-top:10px; letter-spacing:-.5px; }

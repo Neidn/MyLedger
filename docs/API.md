@@ -27,7 +27,7 @@
 { "name": "여행비", "type": "savings", "openingBalanceKrw": 1000000 }
 ```
 
-허용 type: `bank`, `savings`, `cash`, `prepaid`. 선결제 시작 잔액이 있으면 100% 실결제된 기존 충전 잔액 lot으로 해석한다. 보너스가 포함된 실제 충전 내역을 복원하려면 초기 잔액 대신 개별 충전 데이터 마이그레이션이 필요하다.
+허용 type: `bank`, `savings`, `cash`, `prepaid`, `card`. `card`의 `openingBalanceKrw`는 **현재 결제 예정액**(빚)이며 잔액은 음수로 시작한다. 선결제 시작 잔액이 있으면 100% 실결제된 기존 충전 잔액 lot으로 해석한다. 보너스가 포함된 실제 충전 내역을 복원하려면 초기 잔액 대신 개별 충전 데이터 마이그레이션이 필요하다.
 
 ### `PATCH /api/accounts/{id}`
 
