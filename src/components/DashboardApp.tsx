@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type { Account, AccountType, Dashboard, Transaction, TransactionKind } from '@/domain/models';
+import AmountInput from './AmountInput';
 
 const won = (n: number) => `${n.toLocaleString('ko-KR')}원`;
 const typeLabel: Record<AccountType, string> = { bank: '은행', cash: '현금', savings: '저축', prepaid: '선결제', card: '카드' };
@@ -276,7 +277,7 @@ export default function DashboardApp() {
                     {funds.filter((a) => a.id !== r.protectedAccountId).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                   </select>
                 </div>
-                <div className="field"><label htmlFor={`repay-${r.id}`}>보충 금액</label><input id={`repay-${r.id}`} type="number" min="1" step="1" value={repayAmount} onChange={(e) => setRepayAmount(e.target.value)} placeholder="50000" /></div>
+                <div className="field"><label htmlFor={`repay-${r.id}`}>보충 금액</label><AmountInput id={`repay-${r.id}`} value={repayAmount} onValueChange={setRepayAmount} placeholder="50,000" /></div>
                 <button className="btn" type="button" onClick={() => repay(r.id)} disabled={busy || !repaySourceId || !repayAmount}>보충</button>
               </div>
             </div>)}
@@ -302,9 +303,9 @@ export default function DashboardApp() {
                   ? <form onSubmit={(e) => amendTransaction(e, t)}>
                     <div className="form-grid">
                       <div className="field"><label htmlFor={`tx-amount-${t.id}`}>{t.kind === 'prepaid_topup' ? '실제 결제 금액 (원)' : '금액 (원)'}</label>
-                        <input id={`tx-amount-${t.id}`} type="number" min="1" step="1" required value={txAmount} onChange={(e) => setTxAmount(e.target.value)} /></div>
+                        <AmountInput id={`tx-amount-${t.id}`} required value={txAmount} onValueChange={setTxAmount} /></div>
                       {t.kind === 'prepaid_topup' && <div className="field"><label htmlFor={`tx-face-${t.id}`}>충전 액면 금액 (원)</label>
-                        <input id={`tx-face-${t.id}`} type="number" min="1" step="1" required value={txFace} onChange={(e) => setTxFace(e.target.value)} /></div>}
+                        <AmountInput id={`tx-face-${t.id}`} required value={txFace} onValueChange={setTxFace} /></div>}
                       {(t.kind === 'income' || t.kind === 'expense') && <div className="field"><label htmlFor={`tx-cat-${t.id}`}>항목</label>
                         <input id={`tx-cat-${t.id}`} value={txCategory} onChange={(e) => setTxCategory(e.target.value)} /></div>}
                       <div className="field"><label htmlFor={`tx-date-${t.id}`}>날짜</label>
@@ -350,9 +351,9 @@ export default function DashboardApp() {
                 </select>
               </div>}
               <div className="field"><label htmlFor="amount">{kind === 'prepaid_topup' ? '실제 결제 금액 (원)' : '금액 (원)'}</label>
-                <input id="amount" type="number" min="1" step="1" required placeholder="30000" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+                <AmountInput id="amount" required placeholder="30,000" value={amount} onValueChange={setAmount} /></div>
               {kind === 'prepaid_topup' && <div className="field"><label htmlFor="face">충전 액면 금액 (원)</label>
-                <input id="face" type="number" min="1" step="1" required placeholder="100000" value={faceAmount} onChange={(e) => setFaceAmount(e.target.value)} /></div>}
+                <AmountInput id="face" required placeholder="100,000" value={faceAmount} onValueChange={setFaceAmount} /></div>}
               {(kind === 'expense' || kind === 'income') && <div className="field"><label htmlFor="category">항목 (선택)</label>
                 <input id="category" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="식비, 급여..." /></div>}
               <div className="field full"><label htmlFor="note">메모 (선택)</label>
@@ -376,7 +377,7 @@ export default function DashboardApp() {
               <div className="field"><label htmlFor="accountType">유형</label><select id="accountType" value={newAccountType} onChange={(e) => setNewAccountType(e.target.value as AccountType)}>
                 <option value="bank">은행</option><option value="cash">현금</option><option value="savings">저축</option><option value="prepaid">선결제 충전금</option><option value="card">신용카드</option>
               </select></div>
-              <div className="field full"><label htmlFor="opening">{newAccountType === 'card' ? '현재 결제 예정액 (원)' : '초기 잔액 (원)'}</label><input id="opening" required min="0" type="number" step="1" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value)} /></div>
+              <div className="field full"><label htmlFor="opening">{newAccountType === 'card' ? '현재 결제 예정액 (원)' : '초기 잔액 (원)'}</label><AmountInput id="opening" required value={openingBalance} onValueChange={setOpeningBalance} /></div>
             </div>
             <button type="submit" className="btn secondary" disabled={busy}>계좌 생성</button>
           </form>
