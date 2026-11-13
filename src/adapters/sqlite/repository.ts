@@ -2,13 +2,18 @@ import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { createPostings } from '@/domain/postings';
 import { existsSync } from 'node:fs';
-import type { Account, AccountType, Dashboard, Replenishment, Transaction, TransactionCommand } from '@/domain/models';
+import type { Account, AccountType, Dashboard, Replenishment, Transaction, TransactionAmendment, TransactionCommand } from '@/domain/models';
 import type { LedgerRepository } from '@/domain/ports';
 import { allocatePrepaidCost, kstToday, nonnegativeKrw, positiveKrw, shortText, validateDate } from '@/domain/money';
 import { badRequest, conflict, notFound } from '@/lib/errors';
 
 type AccountRow = { id: string; name: string; type: AccountType; created_at: string; archived_at: string | null };
-type TxRow = { id: string; kind: Transaction['kind']; category: string | null; note: string | null; occurred_on: string; created_at: string };
+type TxRow = {
+  id: string; kind: Transaction['kind']; category: string | null; note: string | null; occurred_on: string; created_at: string;
+  reverses_transaction_id: string | null;
+};
+type EntryRow = { account_id: string; amount_krw: number; is_system: number };
+const TX_COLUMNS = 'id,kind,category,note,occurred_on,created_at,reverses_transaction_id';
 type LotRow = { id: string; remaining_face: number; remaining_paid: number };
 type ReplenishmentRow = {
   id: string;
@@ -73,7 +78,7 @@ export class SqliteLedgerRepository implements LedgerRepository {
       const { balance } = this.db.prepare('SELECT COALESCE(SUM(amount_krw),0) AS balance FROM entries WHERE account_id=?').get(id) as { balance: number };
       if (balance !== 0) conflict('잔액이 0원인 계좌만 보관할 수 있습니다. 먼저 다른 계좌로 옮기세요.');
       const { owed } = this.db.prepare(`SELECT COUNT(*) AS owed FROM replenishments
-        WHERE protected_account_id=? AND principal_amount > repaid_amount`).get(id) as { owed: number };
+        WHERE protected_account_id=? AND principal_amount > repaid_amount AND cancelled_at IS NULL`).get(id) as { owed: number };
       if (owed > 0) conflict('보충이 남아 있는 계좌는 보관할 수 없습니다.');
       this.db.prepare('UPDATE accounts SET archived_at=? WHERE id=?').run(new Date().toISOString(), id);
     });
@@ -130,72 +135,102 @@ export class SqliteLedgerRepository implements LedgerRepository {
 
   postTransaction(command: TransactionCommand, idempotencyKey?: string): Transaction {
     this.validateIdempotencyKey(idempotencyKey);
-    const execute = this.db.transaction(() => {
-      const duplicate = this.findByIdempotencyKey(idempotencyKey);
-      if (duplicate) return this.readTransaction(duplicate)!;
-
-      const occurredOn = command.occurredOn ? validateDate(command.occurredOn, 'occurredOn') : kstToday();
-      const note = shortText(command.note, 300, '메모') || null;
-      let txId: string;
-      if (command.kind === 'income' || command.kind === 'expense') {
-        const account = this.requireAccount(command.accountId);
-        const amount = positiveKrw(command.amountKrw, 'amountKrw');
-        if (account.type === 'prepaid' && command.kind === 'income') badRequest('선결제 계좌는 충전 기능으로 입금하세요.');
-        if (account.type === 'card' && command.kind === 'income') badRequest('카드 계좌에는 수입을 등록할 수 없습니다. 카드값 납부는 은행 → 카드 이체로 기록하세요.');
-        if (command.kind === 'expense') this.requireBalance(account.id, amount);
-        txId = this.insertTransaction(command.kind, occurredOn, note, shortText(command.category, 60, '카테고리') || null, idempotencyKey);
-        this.insertEntries(txId, createPostings({ kind: command.kind, accountId: account.id, amountKrw: amount }));
-        if (command.kind === 'expense' && account.type === 'prepaid') {
-          this.consumePrepaidLots(account.id, txId, amount, occurredOn);
-        }
-      } else if (command.kind === 'transfer') {
-        const from = this.requireAccount(command.fromAccountId);
-        const to = this.requireAccount(command.toAccountId);
-        const amount = positiveKrw(command.amountKrw, 'amountKrw');
-        if (from.id === to.id) badRequest('동일 계좌로 이체할 수 없습니다.');
-        if (from.type === 'prepaid' || to.type === 'prepaid') badRequest('선결제 계좌는 전용 충전/소비 기능을 사용하세요.');
-        if (from.type === 'card') badRequest('카드에서 다른 계좌로 이체할 수 없습니다. 카드값 납부는 은행 → 카드로 이체하세요.');
-        this.requireBalance(from.id, amount);
-        if (command.replenishment && typeof command.replenishment !== 'object') badRequest('보충 정보가 유효하지 않습니다.');
-        const dueOn = command.replenishment?.dueOn ? validateDate(command.replenishment.dueOn, 'dueOn') : null;
-        txId = this.insertTransaction('transfer', occurredOn, note, null, idempotencyKey);
-        this.insertEntries(txId, createPostings({ kind: 'transfer', fromAccountId: from.id, toAccountId: to.id, amountKrw: amount }));
-        if (command.replenishment) {
-          this.db.prepare(`INSERT INTO replenishments
-            (id,transfer_transaction_id,protected_account_id,destination_account_id,principal_amount,repaid_amount,due_on,created_at)
-            VALUES (?,?,?,?,?,0,?,?)`).run(randomUUID(), txId, from.id, to.id, amount, dueOn, new Date().toISOString());
-        }
-      } else if (command.kind === 'prepaid_topup') {
-        const from = this.requireAccount(command.fromAccountId);
-        const prepaid = this.requireAccount(command.prepaidAccountId);
-        const paid = positiveKrw(command.paidAmountKrw, 'paidAmountKrw');
-        const face = positiveKrw(command.faceAmountKrw, 'faceAmountKrw');
-        if (paid > face) badRequest('초기 버전은 액면 금액이 결제금액 이상인 충전만 지원합니다.');
-        if (prepaid.type !== 'prepaid' || from.type === 'prepaid') badRequest('출금 계좌와 충전 계좌 유형을 확인하세요.');
-        const expiresOn = command.expiresOn ? validateDate(command.expiresOn, 'expiresOn') : null;
-        this.requireBalance(from.id, paid);
-        txId = this.insertTransaction('prepaid_topup', occurredOn, note, null, idempotencyKey);
-        this.insertEntries(txId, createPostings({ kind: 'prepaid_topup', fromAccountId: from.id, prepaidAccountId: prepaid.id, paidAmountKrw: paid, faceAmountKrw: face }));
-        this.insertLot(prepaid.id, txId, face, paid, expiresOn, new Date().toISOString());
-      } else {
-        badRequest('지원하지 않는 거래 유형입니다.');
-      }
-      return this.readTransaction(txId)!;
-    });
+    const execute = this.db.transaction(() => this.readTransaction(this.post(command, idempotencyKey))!);
     try { return execute.immediate(); }
-    catch (err) {
-      if (err instanceof Error && (err.message.includes('amountKrw:') || err.message.includes('날짜') || err.message.includes('길이 제한'))) {
-        badRequest(err.message);
+    catch (err) { return this.rethrowAsBadRequest(err); }
+  }
+
+  /** Validates and records a command inside the caller's DB transaction; returns its id. */
+  private post(command: TransactionCommand, idempotencyKey?: string): string {
+    const duplicate = this.findByIdempotencyKey(idempotencyKey);
+    if (duplicate) return duplicate;
+
+    const occurredOn = command.occurredOn ? validateDate(command.occurredOn, 'occurredOn') : kstToday();
+    const note = shortText(command.note, 300, '메모') || null;
+    let txId: string;
+    if (command.kind === 'income' || command.kind === 'expense') {
+      const account = this.requireAccount(command.accountId);
+      const amount = positiveKrw(command.amountKrw, 'amountKrw');
+      if (account.type === 'prepaid' && command.kind === 'income') badRequest('선결제 계좌는 충전 기능으로 입금하세요.');
+      if (account.type === 'card' && command.kind === 'income') badRequest('카드 계좌에는 수입을 등록할 수 없습니다. 카드값 납부는 은행 → 카드 이체로 기록하세요.');
+      if (command.kind === 'expense') this.requireBalance(account.id, amount);
+      txId = this.insertTransaction(command.kind, occurredOn, note, shortText(command.category, 60, '카테고리') || null, idempotencyKey);
+      this.insertEntries(txId, createPostings({ kind: command.kind, accountId: account.id, amountKrw: amount }));
+      if (command.kind === 'expense' && account.type === 'prepaid') {
+        this.consumePrepaidLots(account.id, txId, amount, occurredOn);
       }
-      throw err;
+    } else if (command.kind === 'transfer') {
+      const from = this.requireAccount(command.fromAccountId);
+      const to = this.requireAccount(command.toAccountId);
+      const amount = positiveKrw(command.amountKrw, 'amountKrw');
+      if (from.id === to.id) badRequest('동일 계좌로 이체할 수 없습니다.');
+      if (from.type === 'prepaid' || to.type === 'prepaid') badRequest('선결제 계좌는 전용 충전/소비 기능을 사용하세요.');
+      if (from.type === 'card') badRequest('카드에서 다른 계좌로 이체할 수 없습니다. 카드값 납부는 은행 → 카드로 이체하세요.');
+      this.requireBalance(from.id, amount);
+      if (command.replenishment && typeof command.replenishment !== 'object') badRequest('보충 정보가 유효하지 않습니다.');
+      const dueOn = command.replenishment?.dueOn ? validateDate(command.replenishment.dueOn, 'dueOn') : null;
+      txId = this.insertTransaction('transfer', occurredOn, note, null, idempotencyKey);
+      this.insertEntries(txId, createPostings({ kind: 'transfer', fromAccountId: from.id, toAccountId: to.id, amountKrw: amount }));
+      if (command.replenishment) {
+        this.db.prepare(`INSERT INTO replenishments
+          (id,transfer_transaction_id,protected_account_id,destination_account_id,principal_amount,repaid_amount,due_on,created_at)
+          VALUES (?,?,?,?,?,0,?,?)`).run(randomUUID(), txId, from.id, to.id, amount, dueOn, new Date().toISOString());
+      }
+    } else if (command.kind === 'prepaid_topup') {
+      const from = this.requireAccount(command.fromAccountId);
+      const prepaid = this.requireAccount(command.prepaidAccountId);
+      const paid = positiveKrw(command.paidAmountKrw, 'paidAmountKrw');
+      const face = positiveKrw(command.faceAmountKrw, 'faceAmountKrw');
+      if (paid > face) badRequest('초기 버전은 액면 금액이 결제금액 이상인 충전만 지원합니다.');
+      if (prepaid.type !== 'prepaid' || from.type === 'prepaid') badRequest('출금 계좌와 충전 계좌 유형을 확인하세요.');
+      const expiresOn = command.expiresOn ? validateDate(command.expiresOn, 'expiresOn') : null;
+      this.requireBalance(from.id, paid);
+      txId = this.insertTransaction('prepaid_topup', occurredOn, note, null, idempotencyKey);
+      this.insertEntries(txId, createPostings({ kind: 'prepaid_topup', fromAccountId: from.id, prepaidAccountId: prepaid.id, paidAmountKrw: paid, faceAmountKrw: face }));
+      this.insertLot(prepaid.id, txId, face, paid, expiresOn, new Date().toISOString());
+    } else {
+      badRequest('지원하지 않는 거래 유형입니다.');
     }
+    return txId;
+  }
+
+  /** Input-validation errors from the money helpers become 400s; anything else propagates. */
+  private rethrowAsBadRequest(err: unknown): never {
+    if (err instanceof Error && (err.message.includes('amountKrw:') || err.message.includes('날짜') || err.message.includes('길이 제한'))) {
+      badRequest(err.message);
+    }
+    throw err;
   }
 
   listTransactions(limit = 50): Transaction[] {
     const safeLimit = Number.isSafeInteger(limit) ? Math.max(1, Math.min(limit, 100)) : 50;
-    const rows = this.db.prepare(`SELECT id,kind,category,note,occurred_on,created_at
+    const rows = this.db.prepare(`SELECT ${TX_COLUMNS}
       FROM transactions ORDER BY occurred_on DESC,created_at DESC,id DESC LIMIT ?`).all(safeLimit) as TxRow[];
     return rows.map((r) => this.mapTransaction(r));
+  }
+
+  cancelTransaction(id: string, idempotencyKey?: string): Transaction {
+    this.validateIdempotencyKey(idempotencyKey);
+    const execute = this.db.transaction(() => {
+      const duplicate = this.findByIdempotencyKey(idempotencyKey);
+      if (duplicate) return this.readTransaction(duplicate)!;
+      return this.readTransaction(this.reverse(id, idempotencyKey))!;
+    });
+    return execute.immediate();
+  }
+
+  amendTransaction(id: string, changes: TransactionAmendment, idempotencyKey?: string): Transaction {
+    this.validateIdempotencyKey(idempotencyKey);
+    const execute = this.db.transaction(() => {
+      const duplicate = this.findByIdempotencyKey(idempotencyKey);
+      if (duplicate) return this.readTransaction(duplicate)!;
+      // Reverse first so the replacement sees restored balances and lots; any failure
+      // below rolls both back, leaving the original untouched.
+      this.reverse(id);
+      return this.readTransaction(this.post(this.correctedCommand(id, changes), idempotencyKey))!;
+    });
+    try { return execute.immediate(); }
+    catch (err) { return this.rethrowAsBadRequest(err); }
   }
 
   listReplenishments(): Replenishment[] {
@@ -203,6 +238,7 @@ export class SqliteLedgerRepository implements LedgerRepository {
       r.repaid_amount,r.due_on, a.name AS protected_account_name, b.name AS destination_account_name
       FROM replenishments r JOIN accounts a ON r.protected_account_id=a.id
       JOIN accounts b ON r.destination_account_id=b.id
+      WHERE r.cancelled_at IS NULL
       ORDER BY CASE WHEN r.principal_amount > r.repaid_amount THEN 0 ELSE 1 END, r.due_on, r.created_at DESC`).all() as ReplenishmentRow[];
     return rows.map((r) => ({
       id: r.id, protectedAccountId: r.protected_account_id, protectedAccountName: r.protected_account_name,
@@ -343,8 +379,105 @@ export class SqliteLedgerRepository implements LedgerRepository {
   }
 
   private readTransaction(id: string): Transaction | null {
-    const row = this.db.prepare(`SELECT id,kind,category,note,occurred_on,created_at FROM transactions WHERE id=?`).get(id) as TxRow | undefined;
+    const row = this.readTxRow(id);
     return row ? this.mapTransaction(row) : null;
+  }
+
+  private readTxRow(id: string): TxRow | undefined {
+    return this.db.prepare(`SELECT ${TX_COLUMNS} FROM transactions WHERE id=?`).get(id) as TxRow | undefined;
+  }
+
+  private reversalOf(id: string): string | null {
+    const row = this.db.prepare('SELECT id FROM transactions WHERE reverses_transaction_id=?').get(id) as { id: string } | undefined;
+    return row?.id || null;
+  }
+
+  private entriesOf(id: string): EntryRow[] {
+    return this.db.prepare(`SELECT e.account_id, e.amount_krw, a.is_system FROM entries e
+      JOIN accounts a ON a.id=e.account_id WHERE e.transaction_id=? ORDER BY e.rowid`).all(id) as EntryRow[];
+  }
+
+  /**
+   * Records a reversal of `id` inside the caller's DB transaction and undoes its side effects
+   * (prepaid lots, replenishment obligations). Same kind, negated entries, original date, so
+   * the original period nets to zero. Returns the reversal's id.
+   */
+  private reverse(id: string, idempotencyKey?: string): string {
+    const original = this.readTxRow(id);
+    if (!original) notFound('거래를 찾을 수 없습니다.');
+    if (original.reverses_transaction_id) conflict('취소 기록은 다시 취소할 수 없습니다.');
+    if (this.reversalOf(id)) conflict('이미 취소된 거래입니다.');
+    if (original.kind === 'opening') badRequest('초기 잔액은 취소할 수 없습니다. 잘못 만든 계좌는 삭제하고, 그 외에는 잔액 조정 거래로 맞추세요.');
+
+    if (original.kind === 'expense') {
+      // A prepaid spend: return the face value and its cost to the lots it came from.
+      const allocations = this.db.prepare('SELECT lot_id, face_used, paid_used FROM prepaid_allocations WHERE spend_transaction_id=?').all(id) as
+        Array<{ lot_id: string; face_used: number; paid_used: number }>;
+      const restore = this.db.prepare('UPDATE prepaid_lots SET remaining_face=remaining_face+?, remaining_paid=remaining_paid+? WHERE id=?');
+      for (const a of allocations) restore.run(a.face_used, a.paid_used, a.lot_id);
+    } else if (original.kind === 'prepaid_topup') {
+      const lot = this.db.prepare('SELECT id, face_amount, remaining_face FROM prepaid_lots WHERE topup_transaction_id=?').get(id) as
+        { id: string; face_amount: number; remaining_face: number } | undefined;
+      if (lot && lot.remaining_face < lot.face_amount) conflict('이미 사용한 충전금은 취소할 수 없습니다. 사용 내역을 먼저 취소하세요.');
+      if (lot) this.db.prepare('UPDATE prepaid_lots SET remaining_face=0, remaining_paid=0 WHERE id=?').run(lot.id);
+    } else if (original.kind === 'transfer') {
+      const owed = this.db.prepare('SELECT id, repaid_amount FROM replenishments WHERE transfer_transaction_id=? AND cancelled_at IS NULL').get(id) as
+        { id: string; repaid_amount: number } | undefined;
+      if (owed && owed.repaid_amount > 0) conflict('보충 기록이 있는 임시 인출입니다. 보충 거래를 먼저 취소하세요.');
+      if (owed) this.db.prepare('UPDATE replenishments SET cancelled_at=? WHERE id=?').run(new Date().toISOString(), owed.id);
+    } else if (original.kind === 'replenishment_repayment') {
+      const payment = this.db.prepare('SELECT replenishment_id, amount_krw FROM replenishment_payments WHERE transaction_id=?').get(id) as
+        { replenishment_id: string; amount_krw: number } | undefined;
+      if (payment) this.db.prepare('UPDATE replenishments SET repaid_amount=repaid_amount-? WHERE id=?').run(payment.amount_krw, payment.replenishment_id);
+    }
+
+    const entries = this.entriesOf(id);
+    for (const e of entries.filter((entry) => !entry.is_system)) {
+      // Archived accounts take no postings; money the original paid in must still be there.
+      const account = this.requireAccount(e.account_id);
+      if (e.amount_krw > 0) this.requireBalance(account.id, e.amount_krw);
+    }
+    const reversalId = randomUUID();
+    this.db.prepare(`INSERT INTO transactions(id,kind,category,note,occurred_on,created_at,idempotency_key,reverses_transaction_id)
+      VALUES (?,?,?,?,?,?,?,?)`).run(reversalId, original.kind, original.category, original.note ? `취소: ${original.note}`.slice(0, 300) : '취소',
+      original.occurred_on, new Date().toISOString(), idempotencyKey || null, id);
+    this.insertEntries(reversalId, entries.map((e) => [e.account_id, -e.amount_krw]));
+    return reversalId;
+  }
+
+  /** Rebuilds the command behind transaction `id` from its ledger rows, with `changes` applied. */
+  private correctedCommand(id: string, changes: TransactionAmendment): TransactionCommand {
+    const original = this.readTxRow(id)!;
+    const own = this.entriesOf(id).filter((e) => !e.is_system);
+    const out = own.find((e) => e.amount_krw < 0);
+    const into = own.find((e) => e.amount_krw > 0);
+    const common = {
+      note: changes.note !== undefined ? changes.note : original.note ?? undefined,
+      occurredOn: changes.occurredOn ?? original.occurred_on,
+    };
+    if (original.kind === 'income' || original.kind === 'expense') {
+      const entry = original.kind === 'income' ? into! : out!;
+      return {
+        kind: original.kind, accountId: entry.account_id, amountKrw: changes.amountKrw ?? Math.abs(entry.amount_krw),
+        category: changes.category !== undefined ? changes.category : original.category ?? undefined, ...common,
+      };
+    }
+    if (original.kind === 'transfer') {
+      const owed = this.db.prepare('SELECT due_on FROM replenishments WHERE transfer_transaction_id=?').get(id) as { due_on: string | null } | undefined;
+      return {
+        kind: 'transfer', fromAccountId: out!.account_id, toAccountId: into!.account_id, amountKrw: changes.amountKrw ?? into!.amount_krw,
+        ...(owed ? { replenishment: owed.due_on ? { dueOn: owed.due_on } : {} } : {}), ...common,
+      };
+    }
+    if (original.kind === 'prepaid_topup') {
+      const lot = this.db.prepare('SELECT expires_on FROM prepaid_lots WHERE topup_transaction_id=?').get(id) as { expires_on: string | null } | undefined;
+      return {
+        kind: 'prepaid_topup', fromAccountId: out!.account_id, prepaidAccountId: into!.account_id,
+        paidAmountKrw: changes.amountKrw ?? -out!.amount_krw, faceAmountKrw: changes.faceAmountKrw ?? into!.amount_krw,
+        expiresOn: lot?.expires_on ?? undefined, ...common,
+      };
+    }
+    return badRequest('보충 거래는 수정할 수 없습니다. 취소한 뒤 다시 등록하세요.');
   }
 
   private mapTransaction(row: TxRow): Transaction {
@@ -359,6 +492,8 @@ export class SqliteLedgerRepository implements LedgerRepository {
       occurredOn: row.occurred_on, createdAt: row.created_at,
       entries: entries.map((e) => ({ accountId: e.account_id, accountName: e.account_name, amountKrw: e.amount_krw })),
       realCostKrw: costs.real_cost,
+      reversesTransactionId: row.reverses_transaction_id,
+      reversedByTransactionId: this.reversalOf(row.id),
     };
   }
 }

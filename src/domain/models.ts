@@ -34,6 +34,21 @@ export interface Transaction {
   createdAt: string;
   entries?: TransactionEntry[];
   realCostKrw?: number | null;
+  /** Set on a cancellation record: the transaction it reverses. */
+  reversesTransactionId: string | null;
+  /** Set on a cancelled transaction: the record that reversed it. */
+  reversedByTransactionId: string | null;
+}
+
+/** Fields a correction may change; everything else (kind, accounts) comes from the original. */
+export interface TransactionAmendment {
+  /** Amount; for a prepaid top-up this is the amount actually paid. */
+  amountKrw?: number;
+  /** Prepaid top-up only: face value received. */
+  faceAmountKrw?: number;
+  note?: string;
+  category?: string;
+  occurredOn?: string;
 }
 
 export interface Replenishment {

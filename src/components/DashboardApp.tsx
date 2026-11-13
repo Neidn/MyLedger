@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import type { Account, AccountType, Dashboard, TransactionKind } from '@/domain/models';
+import type { Account, AccountType, Dashboard, Transaction, TransactionKind } from '@/domain/models';
 
 const won = (n: number) => `${n.toLocaleString('ko-KR')}원`;
 const typeLabel: Record<AccountType, string> = { bank: '은행', cash: '현금', savings: '저축', prepaid: '선결제', card: '카드' };
@@ -9,6 +9,16 @@ const kindLabel: Record<TransactionKind, string> = {
   opening: '초기 잔액', income: '수입', expense: '지출', transfer: '이체',
   prepaid_topup: '할인 충전', replenishment_repayment: '계좌 보충',
 };
+
+/** Amounts as entered, recovered from the user-account entries (system legs are not listed). */
+function enteredAmounts(t: Transaction): { amount: number; face?: number } {
+  const entries = t.entries || [];
+  const out = entries.find((e) => e.amountKrw < 0)?.amountKrw ?? 0;
+  const into = entries.find((e) => e.amountKrw > 0)?.amountKrw ?? 0;
+  if (t.kind === 'prepaid_topup') return { amount: -out, face: into };
+  if (t.kind === 'expense') return { amount: -out };
+  return { amount: into };
+}
 
 async function jsonRequest<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: 'no-store', ...options });
@@ -42,6 +52,13 @@ export default function DashboardApp() {
 
   const [editingId, setEditingId] = useState('');
   const [editName, setEditName] = useState('');
+
+  const [editingTxId, setEditingTxId] = useState('');
+  const [txAmount, setTxAmount] = useState('');
+  const [txFace, setTxFace] = useState('');
+  const [txNote, setTxNote] = useState('');
+  const [txCategory, setTxCategory] = useState('');
+  const [txDate, setTxDate] = useState('');
 
   const load = useCallback(async () => {
     const data = await jsonRequest<Dashboard>('/api/dashboard');
@@ -142,6 +159,36 @@ export default function DashboardApp() {
     await apply(() => jsonRequest(accountUrl(account.id), { method: 'DELETE' }), `'${account.name}' 계좌를 삭제했습니다.`);
   }
 
+  const txUrl = (id: string) => `/api/transactions/${encodeURIComponent(id)}`;
+
+  function startTxEdit(t: Transaction) {
+    const { amount, face } = enteredAmounts(t);
+    setEditingTxId(t.id);
+    setTxAmount(String(amount));
+    setTxFace(face !== undefined ? String(face) : '');
+    setTxNote(t.note || '');
+    setTxCategory(t.category || '');
+    setTxDate(t.occurredOn);
+  }
+
+  async function amendTransaction(event: FormEvent, t: Transaction) {
+    event.preventDefault();
+    const body: Record<string, unknown> = { amountKrw: Number(txAmount), note: txNote.trim(), occurredOn: txDate };
+    if (t.kind === 'prepaid_topup') body.faceAmountKrw = Number(txFace);
+    if (t.kind === 'income' || t.kind === 'expense') body.category = txCategory.trim();
+    const ok = await apply(() => jsonRequest(txUrl(t.id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body),
+    }), '거래를 수정했습니다. 원래 거래는 취소 기록으로 남습니다.');
+    if (ok) setEditingTxId('');
+  }
+
+  async function cancelTransaction(t: Transaction) {
+    if (!window.confirm(`이 거래를 취소할까요?\n${t.note || t.category || kindLabel[t.kind]} · ${t.occurredOn}\n취소 기록이 남고 잔액이 되돌아갑니다.`)) return;
+    await apply(() => jsonRequest(`${txUrl(t.id)}/cancel`, {
+      method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() },
+    }), '거래를 취소했습니다.');
+  }
+
   const archiveBlockedReason = (a: Account) =>
     a.balanceKrw !== 0 ? '잔액이 0원이어야 보관할 수 있습니다' : owesReplenishment(a.id) ? '보충이 남아 있어 보관할 수 없습니다' : '';
 
@@ -238,13 +285,45 @@ export default function DashboardApp() {
         <section className="panel">
           <h2>최근 거래</h2>
           {dashboard?.transactions.length === 0 && <div className="empty">등록된 거래가 없습니다.</div>}
-          {dashboard?.transactions.map((t) => <div className="list-row" key={t.id}>
-            <div style={{ minWidth: 0 }}><div className="list-name">{t.note || t.category || kindLabel[t.kind]}</div>
-              <div className="list-sub">{t.occurredOn} · {kindLabel[t.kind]}</div>
-              <div className="list-sub">{t.entries?.map(entryText).join(' / ')}</div>
-              {t.kind === 'expense' && t.realCostKrw !== null && t.realCostKrw !== undefined && <div className="list-sub">실질 부담액 {won(t.realCostKrw)}</div>}
-            </div>
-          </div>)}
+          {dashboard?.transactions.map((t) => {
+            const cancelled = !!t.reversedByTransactionId;
+            const isReversal = !!t.reversesTransactionId;
+            const changeable = !cancelled && !isReversal && t.kind !== 'opening';
+            return <div className={`list-row ${cancelled ? 'cancelled' : ''}`} key={t.id}>
+              <div style={{ minWidth: 0 }} className={editingTxId === t.id ? 'tx-edit' : ''}>
+                <div className="list-name">{t.note || t.category || kindLabel[t.kind]}</div>
+                <div className="list-sub">{t.occurredOn} · {kindLabel[t.kind]}
+                  {cancelled && <> <span className="badge cancelled">취소됨</span></>}
+                  {isReversal && <> <span className="badge reversal">취소 기록</span></>}
+                </div>
+                <div className="list-sub">{t.entries?.map(entryText).join(' / ')}</div>
+                {t.kind === 'expense' && !isReversal && t.realCostKrw !== null && t.realCostKrw !== undefined && <div className="list-sub">실질 부담액 {won(t.realCostKrw)}</div>}
+                {editingTxId === t.id
+                  ? <form onSubmit={(e) => amendTransaction(e, t)}>
+                    <div className="form-grid">
+                      <div className="field"><label htmlFor={`tx-amount-${t.id}`}>{t.kind === 'prepaid_topup' ? '실제 결제 금액 (원)' : '금액 (원)'}</label>
+                        <input id={`tx-amount-${t.id}`} type="number" min="1" step="1" required value={txAmount} onChange={(e) => setTxAmount(e.target.value)} /></div>
+                      {t.kind === 'prepaid_topup' && <div className="field"><label htmlFor={`tx-face-${t.id}`}>충전 액면 금액 (원)</label>
+                        <input id={`tx-face-${t.id}`} type="number" min="1" step="1" required value={txFace} onChange={(e) => setTxFace(e.target.value)} /></div>}
+                      {(t.kind === 'income' || t.kind === 'expense') && <div className="field"><label htmlFor={`tx-cat-${t.id}`}>항목</label>
+                        <input id={`tx-cat-${t.id}`} value={txCategory} onChange={(e) => setTxCategory(e.target.value)} /></div>}
+                      <div className="field"><label htmlFor={`tx-date-${t.id}`}>날짜</label>
+                        <input id={`tx-date-${t.id}`} type="date" required value={txDate} onChange={(e) => setTxDate(e.target.value)} /></div>
+                      <div className="field full"><label htmlFor={`tx-note-${t.id}`}>메모</label>
+                        <input id={`tx-note-${t.id}`} value={txNote} onChange={(e) => setTxNote(e.target.value)} /></div>
+                    </div>
+                    <div className="account-actions">
+                      <button className="btn small" type="submit" disabled={busy || !txAmount}>저장</button>
+                      <button className="btn small secondary" type="button" onClick={() => setEditingTxId('')}>닫기</button>
+                    </div>
+                  </form>
+                  : changeable && <div className="account-actions">
+                    {t.kind !== 'replenishment_repayment' && <button className="btn small secondary" type="button" disabled={busy} onClick={() => startTxEdit(t)}>수정</button>}
+                    <button className="btn small danger" type="button" disabled={busy} onClick={() => cancelTransaction(t)}>취소</button>
+                  </div>}
+              </div>
+            </div>;
+          })}
         </section>
       </div>
 
@@ -311,6 +390,6 @@ export default function DashboardApp() {
         </section>
       </div>
     </div>
-    <footer className="footer">초기 개인용 스캐폴드입니다. 인증을 구현하기 전에는 인터넷에 공개하지 마세요. 거래 수정·취소, 환불·만료 및 자동 예측은 아직 지원되지 않습니다.</footer>
+    <footer className="footer">초기 개인용 스캐폴드입니다. 인증을 구현하기 전에는 인터넷에 공개하지 마세요. 거래 수정·취소는 역거래로 기록됩니다. 환불·만료 및 자동 예측은 아직 지원되지 않습니다.</footer>
   </div>;
 }
