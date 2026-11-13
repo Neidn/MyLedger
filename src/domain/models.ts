@@ -40,6 +40,36 @@ export interface Transaction {
   reversedByTransactionId: string | null;
 }
 
+export interface TransactionFilter {
+  /** 'YYYY-MM': only transactions dated in that month. */
+  month?: string;
+  /** Case-insensitive substring of the note or category. */
+  query?: string;
+  limit?: number;
+}
+
+export interface CategorySpending {
+  /** null = no category entered. */
+  category: string | null;
+  spendingKrw: number;
+  /** Transactions still in effect (excludes cancelled ones and cancellation records). */
+  count: number;
+}
+
+/**
+ * One calendar month. Spending/income come from the SYS:expense / SYS:income legs, so card
+ * purchases count when made, transfers/top-ups/bill payments never count, and a cancellation
+ * (dated on the original day) nets out of the month it belongs to.
+ */
+export interface MonthlyReport {
+  month: string;
+  spendingKrw: number;
+  incomeKrw: number;
+  netKrw: number;
+  /** Ranked by spending, largest first. */
+  categories: CategorySpending[];
+}
+
 /** Fields a correction may change; everything else (kind, accounts) comes from the original. */
 export interface TransactionAmendment {
   /** Amount; for a prepaid top-up this is the amount actually paid. */

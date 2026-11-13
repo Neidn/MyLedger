@@ -46,9 +46,26 @@
 
 잘못 만든 계좌 삭제. `deletable`(초기 잔액 외 거래·보충 연결 없음)일 때만 허용하며, 해당 개시 거래와 개시 lot도 함께 삭제한다. 거래가 있으면 409 — 대신 보관한다. 응답: `{ "deletedId": "uuid" }`.
 
-### `GET /api/transactions?limit=50`
+### `GET /api/transactions?limit=50&month=YYYY-MM&q=검색어`
 
-최신 거래와 계좌 이동을 반환한다.
+최신 거래와 계좌 이동을 반환한다(날짜 내림차순). `limit` 기본 50, 최대 500. `month`는 그 달(`occurred_on`)만, `q`는 메모·항목 부분 일치(LIKE 와일드카드는 문자 그대로). 잘못된 `month`는 400.
+
+### `GET /api/reports/monthly?month=YYYY-MM`
+
+`month` 생략 시 한국 기준 이번 달.
+
+```json
+{ "report": { "month": "2026-11", "spendingKrw": 703900, "incomeKrw": 3200000, "netKrw": 2496100,
+  "categories": [{ "category": "주거", "spendingKrw": 550000, "count": 1 }, { "category": null, "spendingKrw": 9900, "count": 1 }] } }
+```
+
+- 지출 = 그 달 거래의 `SYS:expense` 항목 합, 수입 = `SYS:income` 항목 합의 부호 반전. 따라서 카드 결제는 결제일에 지출, 이체·카드값 납부·선결제 충전은 지출 아님, 선결제 사용은 액면 기준 지출.
+- 취소(역거래)는 원래 날짜로 기록되므로 그 달 안에서 상쇄된다. 합이 0인 항목은 `categories`에서 빠진다.
+- `categories`는 지출 큰 순. `category: null`은 미분류. `count`는 취소되지 않은 원거래 수.
+
+### `GET /api/categories`
+
+사용 중인 항목 이름을 많이 쓴 순으로 반환(입력 자동완성용). 취소 기록은 세지 않는다. `{ "categories": ["식비", "교통"] }`
 
 ### `POST /api/transactions`
 

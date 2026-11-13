@@ -33,6 +33,21 @@ export function kstToday(): string {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
+/** Current month in Korea, 'YYYY-MM'. */
+export function kstMonth(): string {
+  return kstToday().slice(0, 7);
+}
+
+/** 'YYYY-MM' -> [first day, first day of next month) as YYYY-MM-DD, for occurred_on range queries. */
+export function monthRange(month: unknown): [string, string] {
+  const match = typeof month === 'string' ? /^(\d{4})-(\d{2})$/.exec(month) : null;
+  const year = match ? Number(match[1]) : NaN;
+  const mon = match ? Number(match[2]) : NaN;
+  if (!match || mon < 1 || mon > 12) throw new DomainValidationError('month: YYYY-MM 형식이 필요합니다.');
+  const next = mon === 12 ? `${year + 1}-01` : `${year}-${String(mon + 1).padStart(2, '0')}`;
+  return [`${month}-01`, `${next}-01`];
+}
+
 export function validateDate(date: unknown, name = 'date'): string {
   if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new DomainValidationError(`${name}: YYYY-MM-DD 형식이 필요합니다.`);
   const d = new Date(`${date}T00:00:00.000Z`);

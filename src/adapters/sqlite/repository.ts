@@ -2,9 +2,11 @@ import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { createPostings } from '@/domain/postings';
 import { existsSync } from 'node:fs';
-import type { Account, AccountType, Dashboard, Replenishment, Transaction, TransactionAmendment, TransactionCommand } from '@/domain/models';
+import type {
+  Account, AccountType, Dashboard, MonthlyReport, Replenishment, Transaction, TransactionAmendment, TransactionCommand, TransactionFilter,
+} from '@/domain/models';
 import type { LedgerRepository } from '@/domain/ports';
-import { allocatePrepaidCost, kstToday, nonnegativeKrw, positiveKrw, shortText, validateDate } from '@/domain/money';
+import { allocatePrepaidCost, kstToday, monthRange, nonnegativeKrw, positiveKrw, shortText, validateDate } from '@/domain/money';
 import { badRequest, conflict, notFound } from '@/lib/errors';
 
 type AccountRow = { id: string; name: string; type: AccountType; created_at: string; archived_at: string | null };
@@ -202,11 +204,56 @@ export class SqliteLedgerRepository implements LedgerRepository {
     throw err;
   }
 
-  listTransactions(limit = 50): Transaction[] {
-    const safeLimit = Number.isSafeInteger(limit) ? Math.max(1, Math.min(limit, 100)) : 50;
-    const rows = this.db.prepare(`SELECT ${TX_COLUMNS}
-      FROM transactions ORDER BY occurred_on DESC,created_at DESC,id DESC LIMIT ?`).all(safeLimit) as TxRow[];
+  listTransactions(filter: TransactionFilter = {}): Transaction[] {
+    const limit = filter.limit ?? 50;
+    const safeLimit = Number.isSafeInteger(limit) ? Math.max(1, Math.min(limit, 500)) : 50;
+    const where: string[] = [];
+    const params: Array<string | number> = [];
+    if (filter.month !== undefined) {
+      const [from, to] = this.monthBounds(filter.month);
+      where.push('occurred_on >= ? AND occurred_on < ?');
+      params.push(from, to);
+    }
+    const query = filter.query?.trim();
+    if (query) {
+      const pattern = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
+      where.push("(note LIKE ? ESCAPE '\\' OR category LIKE ? ESCAPE '\\')");
+      params.push(pattern, pattern);
+    }
+    const rows = this.db.prepare(`SELECT ${TX_COLUMNS} FROM transactions
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY occurred_on DESC,created_at DESC,id DESC LIMIT ?`).all(...params, safeLimit) as TxRow[];
     return rows.map((r) => this.mapTransaction(r));
+  }
+
+  getMonthlyReport(month: string): MonthlyReport {
+    const [from, to] = this.monthBounds(month);
+    // Spending/income are the SYS:expense / SYS:income legs; reversals carry the original
+    // date, so a cancelled transaction nets to zero inside its own month.
+    const totals = this.db.prepare(`SELECT
+        COALESCE(SUM(CASE WHEN e.account_id='SYS:expense' THEN e.amount_krw END), 0) AS spending,
+        COALESCE(-SUM(CASE WHEN e.account_id='SYS:income' THEN e.amount_krw END), 0) AS income
+      FROM entries e JOIN transactions t ON t.id=e.transaction_id
+      WHERE t.occurred_on >= ? AND t.occurred_on < ?`).get(from, to) as { spending: number; income: number };
+    const categories = this.db.prepare(`SELECT t.category, SUM(e.amount_krw) AS spending,
+        SUM(CASE WHEN t.reverses_transaction_id IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM transactions r WHERE r.reverses_transaction_id=t.id)
+                 THEN 1 ELSE 0 END) AS count
+      FROM entries e JOIN transactions t ON t.id=e.transaction_id
+      WHERE e.account_id='SYS:expense' AND t.occurred_on >= ? AND t.occurred_on < ?
+      GROUP BY t.category HAVING SUM(e.amount_krw) <> 0
+      ORDER BY spending DESC, t.category IS NULL, t.category`).all(from, to) as Array<{ category: string | null; spending: number; count: number }>;
+    return {
+      month, spendingKrw: totals.spending, incomeKrw: totals.income, netKrw: totals.income - totals.spending,
+      categories: categories.map((c) => ({ category: c.category, spendingKrw: c.spending, count: c.count })),
+    };
+  }
+
+  listCategories(): string[] {
+    const rows = this.db.prepare(`SELECT category, COUNT(*) AS uses FROM transactions
+      WHERE category IS NOT NULL AND category <> '' AND reverses_transaction_id IS NULL
+      GROUP BY category ORDER BY uses DESC, category`).all() as Array<{ category: string }>;
+    return rows.map((r) => r.category);
   }
 
   cancelTransaction(id: string, idempotencyKey?: string): Transaction {
@@ -287,7 +334,7 @@ export class SqliteLedgerRepository implements LedgerRepository {
     const replenishments = this.listReplenishments();
     const sum = (filter: (a: Account) => boolean) => accounts.filter(filter).reduce((n, a) => n + a.balanceKrw, 0);
     return {
-      accounts, archivedAccounts, transactions: this.listTransactions(30), replenishments,
+      accounts, archivedAccounts, transactions: this.listTransactions({ limit: 30 }), replenishments,
       totals: {
         assetBalanceKrw: sum(() => true),
         liquidBalanceKrw: sum((a) => a.type === 'bank' || a.type === 'cash'),
@@ -296,6 +343,11 @@ export class SqliteLedgerRepository implements LedgerRepository {
         outstandingReplenishmentKrw: replenishments.reduce((n, r) => n + r.remainingKrw, 0),
       },
     };
+  }
+
+  private monthBounds(month: string): [string, string] {
+    try { return monthRange(month); }
+    catch (err) { return badRequest(err instanceof Error ? err.message : 'month: YYYY-MM 형식이 필요합니다.'); }
   }
 
   /** Any user account, archived or not — for account management. */

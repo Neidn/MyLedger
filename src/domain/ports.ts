@@ -1,4 +1,6 @@
-import type { Account, AccountType, Dashboard, Replenishment, Transaction, TransactionAmendment, TransactionCommand } from './models';
+import type {
+  Account, AccountType, Dashboard, MonthlyReport, Replenishment, Transaction, TransactionAmendment, TransactionCommand, TransactionFilter,
+} from './models';
 
 /** DB-agnostic repository contract. Neither routes nor domain import SQLite/pg. */
 export interface LedgerRepository {
@@ -11,7 +13,10 @@ export interface LedgerRepository {
   /** Only for accounts with nothing but their opening balance (created by mistake). */
   deleteAccount(id: string): void;
   postTransaction(command: TransactionCommand, idempotencyKey?: string): Transaction;
-  listTransactions(limit?: number): Transaction[];
+  listTransactions(filter?: TransactionFilter): Transaction[];
+  getMonthlyReport(month: string): MonthlyReport;
+  /** Categories in use, most used first — for input suggestions. */
+  listCategories(): string[];
   /** Records a reversal (same kind, negated entries, original date). Returns the reversal. */
   cancelTransaction(id: string, idempotencyKey?: string): Transaction;
   /** Reverses the original and posts a corrected copy atomically. Returns the replacement. */
