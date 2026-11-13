@@ -13,6 +13,11 @@ test('income, expense and transfer postings balance to zero', () => {
   for (const entries of cases) assert.equal(total(entries), 0);
 });
 
+test('card opening debt makes the card negative and balances against SYS:opening', () => {
+  const entries = createPostings({ kind: 'opening_debt', accountId: 'C', amountKrw: 50000 });
+  assert.deepEqual(entries, [['C', -50000], ['SYS:opening', 50000]]);
+});
+
 test('prepaid discount creates noncash benefit leg', () => {
   const entries = createPostings({ kind: 'prepaid_topup', fromAccountId: 'BANK', prepaidAccountId: 'PREPAID', paidAmountKrw: 90000, faceAmountKrw: 100000 });
   assert.deepEqual(entries, [['BANK', -90000], ['PREPAID', 100000], ['SYS:benefit', -10000]]);

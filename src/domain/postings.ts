@@ -3,7 +3,7 @@ import { positiveKrw } from './money';
 export type Posting = [accountId: string, deltaKrw: number];
 
 type PostingCommand =
-  | { kind: 'opening' | 'income' | 'expense'; accountId: string; amountKrw: number }
+  | { kind: 'opening' | 'opening_debt' | 'income' | 'expense'; accountId: string; amountKrw: number }
   | { kind: 'transfer' | 'replenishment_repayment'; fromAccountId: string; toAccountId: string; amountKrw: number }
   | { kind: 'prepaid_topup'; fromAccountId: string; prepaidAccountId: string; paidAmountKrw: number; faceAmountKrw: number };
 
@@ -13,6 +13,10 @@ export function createPostings(command: PostingCommand): Posting[] {
   if (command.kind === 'opening' || command.kind === 'income') {
     const amount = positiveKrw(command.amountKrw);
     postings = [[command.accountId, amount], [command.kind === 'income' ? 'SYS:income' : 'SYS:opening', -amount]];
+  } else if (command.kind === 'opening_debt') {
+    // A card created with an existing bill: the card starts negative (owed).
+    const amount = positiveKrw(command.amountKrw);
+    postings = [[command.accountId, -amount], ['SYS:opening', amount]];
   } else if (command.kind === 'expense') {
     const amount = positiveKrw(command.amountKrw);
     postings = [[command.accountId, -amount], ['SYS:expense', amount]];

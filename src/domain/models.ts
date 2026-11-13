@@ -1,4 +1,5 @@
-export type AccountType = 'bank' | 'savings' | 'cash' | 'prepaid';
+/** card: credit card, a liability — its balance is negative while a bill is owed. */
+export type AccountType = 'bank' | 'savings' | 'cash' | 'prepaid' | 'card';
 export type TransactionKind = 'opening' | 'income' | 'expense' | 'transfer' | 'prepaid_topup' | 'replenishment_repayment';
 
 export interface Account {
@@ -56,6 +57,8 @@ export interface Dashboard {
     assetBalanceKrw: number;
     liquidBalanceKrw: number;
     prepaidBalanceKrw: number;
+    /** Card bills owed (sum of negative card balances, as a positive number). */
+    cardOutstandingKrw: number;
     outstandingReplenishmentKrw: number;
   };
 }

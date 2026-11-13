@@ -106,7 +106,7 @@ export class SqliteLedgerRepository implements LedgerRepository {
   createAccount(input: { name: string; type: AccountType; openingBalanceKrw: number }): Account {
     const name = shortText(input.name, 50, '계좌 이름');
     if (!name) badRequest('계좌 이름을 입력하세요.');
-    if (!['bank', 'savings', 'cash', 'prepaid'].includes(input.type)) badRequest('지원하지 않는 계좌 유형입니다.');
+    if (!['bank', 'savings', 'cash', 'prepaid', 'card'].includes(input.type)) badRequest('지원하지 않는 계좌 유형입니다.');
     let opening: number;
     try { opening = nonnegativeKrw(input.openingBalanceKrw, 'openingBalanceKrw'); }
     catch { return badRequest('초기 잔액은 0 이상의 정수여야 합니다.'); }
@@ -115,8 +115,10 @@ export class SqliteLedgerRepository implements LedgerRepository {
     const execute = this.db.transaction(() => {
       this.db.prepare('INSERT INTO accounts(id,name,type,is_system,created_at) VALUES(?,?,?,0,?)').run(id, name, input.type, now);
       if (opening > 0) {
-        const txId = this.insertTransaction('opening', kstToday(), '초기 잔액', null);
-        this.insertEntries(txId, createPostings({ kind: 'opening', accountId: id, amountKrw: opening }));
+        // For a card the opening amount is the bill already owed.
+        const isCard = input.type === 'card';
+        const txId = this.insertTransaction('opening', kstToday(), isCard ? '초기 카드 결제 예정액' : '초기 잔액', null);
+        this.insertEntries(txId, createPostings({ kind: isCard ? 'opening_debt' : 'opening', accountId: id, amountKrw: opening }));
         if (input.type === 'prepaid') {
           this.insertLot(id, txId, opening, opening, null, now);
         }
@@ -139,6 +141,7 @@ export class SqliteLedgerRepository implements LedgerRepository {
         const account = this.requireAccount(command.accountId);
         const amount = positiveKrw(command.amountKrw, 'amountKrw');
         if (account.type === 'prepaid' && command.kind === 'income') badRequest('선결제 계좌는 충전 기능으로 입금하세요.');
+        if (account.type === 'card' && command.kind === 'income') badRequest('카드 계좌에는 수입을 등록할 수 없습니다. 카드값 납부는 은행 → 카드 이체로 기록하세요.');
         if (command.kind === 'expense') this.requireBalance(account.id, amount);
         txId = this.insertTransaction(command.kind, occurredOn, note, shortText(command.category, 60, '카테고리') || null, idempotencyKey);
         this.insertEntries(txId, createPostings({ kind: command.kind, accountId: account.id, amountKrw: amount }));
@@ -151,6 +154,7 @@ export class SqliteLedgerRepository implements LedgerRepository {
         const amount = positiveKrw(command.amountKrw, 'amountKrw');
         if (from.id === to.id) badRequest('동일 계좌로 이체할 수 없습니다.');
         if (from.type === 'prepaid' || to.type === 'prepaid') badRequest('선결제 계좌는 전용 충전/소비 기능을 사용하세요.');
+        if (from.type === 'card') badRequest('카드에서 다른 계좌로 이체할 수 없습니다. 카드값 납부는 은행 → 카드로 이체하세요.');
         this.requireBalance(from.id, amount);
         if (command.replenishment && typeof command.replenishment !== 'object') badRequest('보충 정보가 유효하지 않습니다.');
         const dueOn = command.replenishment?.dueOn ? validateDate(command.replenishment.dueOn, 'dueOn') : null;
@@ -222,6 +226,7 @@ export class SqliteLedgerRepository implements LedgerRepository {
       const amount = positiveKrw(input.amountKrw, 'amountKrw');
       if (from.id === protectedAccount.id) badRequest('보충 출금 계좌와 대상 계좌가 같습니다.');
       if (from.type === 'prepaid' || protectedAccount.type === 'prepaid') badRequest('선결제 계좌의 보충은 지원하지 않습니다.');
+      if (from.type === 'card') badRequest('카드로는 보충할 수 없습니다. 은행·현금 계좌를 선택하세요.');
       if (amount > row.principal_amount - row.repaid_amount) conflict('미보충액보다 많은 금액을 갚을 수 없습니다.');
       this.requireBalance(from.id, amount);
       const occurredOn = input.occurredOn ? validateDate(input.occurredOn, 'occurredOn') : kstToday();
@@ -251,6 +256,7 @@ export class SqliteLedgerRepository implements LedgerRepository {
         assetBalanceKrw: sum(() => true),
         liquidBalanceKrw: sum((a) => a.type === 'bank' || a.type === 'cash'),
         prepaidBalanceKrw: sum((a) => a.type === 'prepaid'),
+        cardOutstandingKrw: accounts.filter((a) => a.type === 'card').reduce((n, a) => n + Math.max(0, -a.balanceKrw), 0),
         outstandingReplenishmentKrw: replenishments.reduce((n, r) => n + r.remainingKrw, 0),
       },
     };
@@ -277,6 +283,8 @@ export class SqliteLedgerRepository implements LedgerRepository {
   }
 
   private requireBalance(id: string, minimum: number): void {
+    // A card is credit: spending on it raises the bill instead of needing a balance.
+    if (this.findAccount(id).type === 'card') return;
     const result = this.db.prepare('SELECT COALESCE(SUM(amount_krw),0) AS balance FROM entries WHERE account_id=?').get(id) as { balance: number };
     if (result.balance < minimum) conflict('출금 계좌의 잔액이 부족합니다.');
   }
