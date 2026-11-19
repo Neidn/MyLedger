@@ -7,8 +7,12 @@ import MonthlyView from './MonthlyView';
 import TransactionRow from './TransactionRow';
 import { CATEGORY_OPTIONS_ID, jsonRequest, kindLabel, typeLabel, won } from './ui';
 
+type View = 'home' | 'add' | 'monthly' | 'accounts';
+const TABS: Array<[View, string]> = [['home', '홈'], ['add', '입력'], ['monthly', '월별 내역'], ['accounts', '계좌']];
+const viewFromHash = (hash: string): View => TABS.find(([id]) => id !== 'home' && `#${id}` === hash)?.[0] ?? 'home';
+
 export default function DashboardApp() {
-  const [view, setView] = useState<'home' | 'monthly'>('home');
+  const [view, setView] = useState<View>('home');
   const [refreshKey, setRefreshKey] = useState(0);
   const [categories, setCategories] = useState<string[]>([]);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -49,14 +53,18 @@ export default function DashboardApp() {
     load().catch((e: Error) => setError(e.message));
   }, [load]);
 
-  // The tab follows the URL hash (#monthly), so it survives reloads and can be bookmarked.
+  // The tab follows the URL hash (#add, #monthly, #accounts), so reload, back and bookmarks work.
   useEffect(() => {
-    const sync = () => setView(window.location.hash === '#monthly' ? 'monthly' : 'home');
+    const sync = () => setView(viewFromHash(window.location.hash));
     sync();
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
   }, []);
-  const showView = (next: 'home' | 'monthly') => { window.location.hash = next === 'monthly' ? 'monthly' : ''; setView(next); };
+  const showView = (next: View) => {
+    window.location.hash = next === 'home' ? '' : next;
+    setView(next);
+    window.scrollTo({ top: 0 });
+  };
 
   async function apply<T>(action: () => Promise<T>, onSuccess: string): Promise<boolean> {
     setBusy(true);
@@ -78,7 +86,8 @@ export default function DashboardApp() {
 
   const accounts = dashboard?.accounts || [];
   const archivedAccounts = dashboard?.archivedAccounts || [];
-  const owesReplenishment = (id: string) => !!dashboard?.replenishments.some((r) => r.protectedAccountId === id && r.remainingKrw > 0);
+  const owedReplenishments = dashboard?.replenishments.filter((r) => r.remainingKrw > 0) || [];
+  const owesReplenishment = (id: string) => owedReplenishments.some((r) => r.protectedAccountId === id);
   const nonPrepaid = accounts.filter((a) => a.type !== 'prepaid');
   const prepaid = accounts.filter((a) => a.type === 'prepaid');
   const hasCards = accounts.some((a) => a.type === 'card');
@@ -174,8 +183,7 @@ export default function DashboardApp() {
     </header>
 
     <nav className="tabs" role="tablist" aria-label="화면">
-      <button className="tab" role="tab" type="button" aria-selected={view === 'home'} onClick={() => showView('home')}>홈</button>
-      <button className="tab" role="tab" type="button" aria-selected={view === 'monthly'} onClick={() => showView('monthly')}>월별 내역</button>
+      {TABS.map(([id, label]) => <button key={id} className="tab" role="tab" type="button" aria-selected={view === id} onClick={() => showView(id)}>{label}</button>)}
     </nav>
 
     <datalist id={CATEGORY_OPTIONS_ID}>{categories.map((c) => <option key={c} value={c} />)}</datalist>
@@ -186,21 +194,99 @@ export default function DashboardApp() {
     {view === 'monthly' && <MonthlyView busy={busy} refreshKey={refreshKey} onCancel={cancelTransaction} onAmend={amendTransaction} />}
 
     {view === 'home' && <>
-    <section className="hero">
-      <div className="hero-title">내 전체 자산 · 충전금 액면 포함{hasCards ? ' · 카드 대금 차감' : ''}</div>
-      <div className="hero-amount">{dashboard ? won(dashboard.totals.assetBalanceKrw) : '불러오는 중...'}</div>
-      <div className="panel-note">입출금 원장의 실제 계좌 잔액 합계입니다. 선결제 혜택이 포함될 수 있으며 현금과는 구분됩니다.</div>
-    </section>
+      <section className="hero">
+        <div className="hero-title">내 전체 자산 · 충전금 액면 포함{hasCards ? ' · 카드 대금 차감' : ''}</div>
+        <div className="hero-amount">{dashboard ? won(dashboard.totals.assetBalanceKrw) : '불러오는 중...'}</div>
+        <div className="panel-note">입출금 원장의 실제 계좌 잔액 합계입니다. 선결제 혜택이 포함될 수 있으며 현금과는 구분됩니다.</div>
+      </section>
 
-    <section className="stat-grid" aria-label="자금 요약">
-      <div className="stat"><div className="label">은행·현금 잔액</div><div className="value">{won(dashboard?.totals.liquidBalanceKrw || 0)}</div></div>
-      <div className="stat"><div className="label">저축·목적 계좌</div><div className="value">{won(accounts.filter((a) => a.type === 'savings').reduce((sum, a) => sum + a.balanceKrw, 0))}</div></div>
-      <div className="stat"><div className="label">선결제 충전금</div><div className="value">{won(dashboard?.totals.prepaidBalanceKrw || 0)}</div></div>
-      <div className="stat warning"><div className="label">다시 채워야 할 돈</div><div className="value">{won(dashboard?.totals.outstandingReplenishmentKrw || 0)}</div></div>
-      {hasCards && <div className="stat card-due"><div className="label">카드 결제 예정</div><div className="value">{won(dashboard?.totals.cardOutstandingKrw || 0)}</div></div>}
-    </section>
+      <section className="stat-grid" aria-label="자금 요약">
+        <div className="stat"><div className="label">은행·현금 잔액</div><div className="value">{won(dashboard?.totals.liquidBalanceKrw || 0)}</div></div>
+        <div className="stat"><div className="label">저축·목적 계좌</div><div className="value">{won(accounts.filter((a) => a.type === 'savings').reduce((sum, a) => sum + a.balanceKrw, 0))}</div></div>
+        <div className="stat"><div className="label">선결제 충전금</div><div className="value">{won(dashboard?.totals.prepaidBalanceKrw || 0)}</div></div>
+        <div className="stat warning"><div className="label">다시 채워야 할 돈</div><div className="value">{won(dashboard?.totals.outstandingReplenishmentKrw || 0)}</div></div>
+        {hasCards && <div className="stat card-due"><div className="label">카드 결제 예정</div><div className="value">{won(dashboard?.totals.cardOutstandingKrw || 0)}</div></div>}
+      </section>
 
-    <div className="columns">
+      {owedReplenishments.length > 0 &&
+      <section className="panel">
+        <h2>보충이 필요한 계좌</h2>
+        {dashboard?.replenishments.filter((r) => r.remainingKrw > 0).length === 0 && <div className="empty">현재 미보충 의무가 없습니다.</div>}
+        {dashboard?.replenishments.filter((r) => r.remainingKrw > 0).map((r) =>
+          <div key={r.id} style={{ paddingBottom: 16, borderTop: '1px solid #f0eee7', paddingTop: 14 }}>
+            <div className="list-row" style={{ borderTop: 0, padding: '0 0 6px' }}>
+              <div><div className="list-name">{r.protectedAccountName}</div><div className="list-sub">{r.destinationAccountName}로 임시 인출 · 기한 {r.dueOn || '미지정'}</div></div>
+              <div className="money" style={{ color: '#a36b25' }}>{won(r.remainingKrw)}</div>
+            </div>
+            <div className="panel-note">처음 {won(r.principalKrw)} / 보충 완료 {won(r.repaidKrw)}</div>
+            <div className="row-inline">
+              <div className="field"><label htmlFor={`source-${r.id}`}>보충 출금 계좌</label>
+                <select id={`source-${r.id}`} value={repaySourceId} onChange={(e) => setRepaySourceId(e.target.value)}>
+                  <option value="">계좌 선택</option>
+                  {funds.filter((a) => a.id !== r.protectedAccountId).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+              <div className="field"><label htmlFor={`repay-${r.id}`}>보충 금액</label><AmountInput id={`repay-${r.id}`} value={repayAmount} onValueChange={setRepayAmount} placeholder="50,000" /></div>
+              <button className="btn" type="button" onClick={() => repay(r.id)} disabled={busy || !repaySourceId || !repayAmount}>보충</button>
+            </div>
+          </div>)}
+      </section>
+      }
+
+      <section className="panel">
+        <h2>최근 거래</h2>
+        {dashboard?.transactions.length === 0 && <div className="empty">등록된 거래가 없습니다.</div>}
+        {dashboard?.transactions.slice(0, 10).map((t) => <TransactionRow key={t.id} t={t} busy={busy} onCancel={cancelTransaction} onAmend={amendTransaction} />)}
+        <div className="account-actions" style={{ marginTop: 12 }}>
+          <button className="btn small" type="button" onClick={() => showView('add')}>＋ 거래 입력</button>
+          {!!dashboard?.transactions.length && <button className="btn small secondary" type="button" onClick={() => showView('monthly')}>월별 내역에서 전체 보기</button>}
+        </div>
+      </section>
+    </>}
+
+    {view === 'add' && <div className="narrow">
+      <section className="panel">
+        <h2>수입 · 지출 · 이체</h2>
+        <form onSubmit={createTransaction}>
+          <div className="field"><label htmlFor="kind">거래 유형</label>
+            <select id="kind" value={kind} onChange={(e) => { setKind(e.target.value as typeof kind); setFromAccountId(''); setToAccountId(''); }}>
+              <option value="expense">지출</option><option value="income">수입</option><option value="transfer">계좌 간 이체</option><option value="prepaid_topup">할인 선결제 충전</option>
+            </select>
+          </div>
+          <div className="form-grid">
+            <div className="field"><label htmlFor="source">{kind === 'income' ? '입금 계좌' : kind === 'expense' ? '결제 계좌' : '출금 계좌'}</label>
+              <select id="source" required value={fromAccountId} onChange={(e) => setFromAccountId(e.target.value)}>
+                <option value="">계좌 선택</option>
+                {fromOptions.map((a) => <option key={a.id} value={a.id}>{a.name} ({won(a.balanceKrw)})</option>)}
+              </select>
+            </div>
+            {(kind === 'transfer' || kind === 'prepaid_topup') && <div className="field"><label htmlFor="dest">{kind === 'transfer' ? '입금 계좌' : '충전 플랫폼'}</label>
+              <select id="dest" required value={toAccountId} onChange={(e) => setToAccountId(e.target.value)}>
+                <option value="">계좌 선택</option>
+                {toOptions.filter((a) => a.id !== fromAccountId).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>}
+            <div className="field"><label htmlFor="amount">{kind === 'prepaid_topup' ? '실제 결제 금액 (원)' : '금액 (원)'}</label>
+              <AmountInput id="amount" required placeholder="30,000" value={amount} onValueChange={setAmount} /></div>
+            {kind === 'prepaid_topup' && <div className="field"><label htmlFor="face">충전 액면 금액 (원)</label>
+              <AmountInput id="face" required placeholder="100,000" value={faceAmount} onValueChange={setFaceAmount} /></div>}
+            {(kind === 'expense' || kind === 'income') && <div className="field"><label htmlFor="category">항목 (선택)</label>
+              <input id="category" list={CATEGORY_OPTIONS_ID} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="식비, 급여..." /></div>}
+            <div className="field full"><label htmlFor="note">메모 (선택)</label>
+              <input id="note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="거래 내용" /></div>
+          </div>
+          {kind === 'transfer' && <div style={{ marginTop: 12 }}>
+            <label style={{ fontSize: 13 }}><input type="checkbox" checked={markReplenishment} onChange={(e) => setMarkReplenishment(e.target.checked)} /> 나중에 다시 채워야 하는 임시 인출</label>
+            {markReplenishment && <div className="field"><label htmlFor="due">보충 예정일 (선택)</label><input id="due" type="date" value={dueOn} onChange={(e) => setDueOn(e.target.value)} /></div>}
+          </div>}
+          {kind === 'transfer' && accounts.some((a) => a.id === toAccountId && a.type === 'card') && <div className="notice">카드값 납부: 소비가 아니라 이체로 기록됩니다. 소비는 카드로 결제할 때 이미 기록되었습니다.</div>}
+          {kind === 'prepaid_topup' && <div className="notice">예: 실제 90,000원 결제 / 충전금 100,000원. 충전 시 소비 지출은 0원이며 혜택 10,000원은 별도 추적됩니다.</div>}
+          <button type="submit" className="btn" disabled={busy || accounts.length === 0}>거래 등록</button>
+        </form>
+      </section>
+    </div>}
+
+    {view === 'accounts' && <div className="columns top">
       <div>
         <section className="panel">
           <h2>계좌 잔액</h2>
@@ -241,79 +327,8 @@ export default function DashboardApp() {
           </details>}
           <div className="panel-note" style={{ marginTop: 12 }}>삭제는 초기 잔액 외 거래가 없는 계좌(잘못 만든 계좌)만 가능합니다. 거래가 있는 계좌는 잔액을 0원으로 옮긴 뒤 보관하세요.</div>
         </section>
-
-        <section className="panel">
-          <h2>보충이 필요한 계좌</h2>
-          {dashboard?.replenishments.filter((r) => r.remainingKrw > 0).length === 0 && <div className="empty">현재 미보충 의무가 없습니다.</div>}
-          {dashboard?.replenishments.filter((r) => r.remainingKrw > 0).map((r) =>
-            <div key={r.id} style={{ paddingBottom: 16, borderTop: '1px solid #f0eee7', paddingTop: 14 }}>
-              <div className="list-row" style={{ borderTop: 0, padding: '0 0 6px' }}>
-                <div><div className="list-name">{r.protectedAccountName}</div><div className="list-sub">{r.destinationAccountName}로 임시 인출 · 기한 {r.dueOn || '미지정'}</div></div>
-                <div className="money" style={{ color: '#a36b25' }}>{won(r.remainingKrw)}</div>
-              </div>
-              <div className="panel-note">처음 {won(r.principalKrw)} / 보충 완료 {won(r.repaidKrw)}</div>
-              <div className="row-inline">
-                <div className="field"><label htmlFor={`source-${r.id}`}>보충 출금 계좌</label>
-                  <select id={`source-${r.id}`} value={repaySourceId} onChange={(e) => setRepaySourceId(e.target.value)}>
-                    <option value="">계좌 선택</option>
-                    {funds.filter((a) => a.id !== r.protectedAccountId).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                </div>
-                <div className="field"><label htmlFor={`repay-${r.id}`}>보충 금액</label><AmountInput id={`repay-${r.id}`} value={repayAmount} onValueChange={setRepayAmount} placeholder="50,000" /></div>
-                <button className="btn" type="button" onClick={() => repay(r.id)} disabled={busy || !repaySourceId || !repayAmount}>보충</button>
-              </div>
-            </div>)}
-        </section>
-
-        <section className="panel">
-          <h2>최근 거래</h2>
-          {dashboard?.transactions.length === 0 && <div className="empty">등록된 거래가 없습니다.</div>}
-          {dashboard?.transactions.map((t) => <TransactionRow key={t.id} t={t} busy={busy} onCancel={cancelTransaction} onAmend={amendTransaction} />)}
-          {!!dashboard?.transactions.length && <button className="btn small secondary" type="button" style={{ marginTop: 10 }} onClick={() => showView('monthly')}>월별 내역에서 전체 보기</button>}
-        </section>
       </div>
-
       <div>
-        <section className="panel">
-          <h2>수입 · 지출 · 이체</h2>
-          <form onSubmit={createTransaction}>
-            <div className="field"><label htmlFor="kind">거래 유형</label>
-              <select id="kind" value={kind} onChange={(e) => { setKind(e.target.value as typeof kind); setFromAccountId(''); setToAccountId(''); }}>
-                <option value="expense">지출</option><option value="income">수입</option><option value="transfer">계좌 간 이체</option><option value="prepaid_topup">할인 선결제 충전</option>
-              </select>
-            </div>
-            <div className="form-grid">
-              <div className="field"><label htmlFor="source">{kind === 'income' ? '입금 계좌' : kind === 'expense' ? '결제 계좌' : '출금 계좌'}</label>
-                <select id="source" required value={fromAccountId} onChange={(e) => setFromAccountId(e.target.value)}>
-                  <option value="">계좌 선택</option>
-                  {fromOptions.map((a) => <option key={a.id} value={a.id}>{a.name} ({won(a.balanceKrw)})</option>)}
-                </select>
-              </div>
-              {(kind === 'transfer' || kind === 'prepaid_topup') && <div className="field"><label htmlFor="dest">{kind === 'transfer' ? '입금 계좌' : '충전 플랫폼'}</label>
-                <select id="dest" required value={toAccountId} onChange={(e) => setToAccountId(e.target.value)}>
-                  <option value="">계좌 선택</option>
-                  {toOptions.filter((a) => a.id !== fromAccountId).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
-              </div>}
-              <div className="field"><label htmlFor="amount">{kind === 'prepaid_topup' ? '실제 결제 금액 (원)' : '금액 (원)'}</label>
-                <AmountInput id="amount" required placeholder="30,000" value={amount} onValueChange={setAmount} /></div>
-              {kind === 'prepaid_topup' && <div className="field"><label htmlFor="face">충전 액면 금액 (원)</label>
-                <AmountInput id="face" required placeholder="100,000" value={faceAmount} onValueChange={setFaceAmount} /></div>}
-              {(kind === 'expense' || kind === 'income') && <div className="field"><label htmlFor="category">항목 (선택)</label>
-                <input id="category" list={CATEGORY_OPTIONS_ID} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="식비, 급여..." /></div>}
-              <div className="field full"><label htmlFor="note">메모 (선택)</label>
-                <input id="note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="거래 내용" /></div>
-            </div>
-            {kind === 'transfer' && <div style={{ marginTop: 12 }}>
-              <label style={{ fontSize: 13 }}><input type="checkbox" checked={markReplenishment} onChange={(e) => setMarkReplenishment(e.target.checked)} /> 나중에 다시 채워야 하는 임시 인출</label>
-              {markReplenishment && <div className="field"><label htmlFor="due">보충 예정일 (선택)</label><input id="due" type="date" value={dueOn} onChange={(e) => setDueOn(e.target.value)} /></div>}
-            </div>}
-            {kind === 'transfer' && accounts.some((a) => a.id === toAccountId && a.type === 'card') && <div className="notice">카드값 납부: 소비가 아니라 이체로 기록됩니다. 소비는 카드로 결제할 때 이미 기록되었습니다.</div>}
-            {kind === 'prepaid_topup' && <div className="notice">예: 실제 90,000원 결제 / 충전금 100,000원. 충전 시 소비 지출은 0원이며 혜택 10,000원은 별도 추적됩니다.</div>}
-            <button type="submit" className="btn" disabled={busy || accounts.length === 0}>거래 등록</button>
-          </form>
-        </section>
-
         <section className="panel">
           <h2>새 계좌 만들기</h2>
           <form onSubmit={createAccount}>
@@ -329,14 +344,9 @@ export default function DashboardApp() {
           <div className="panel-note" style={{ marginTop: 12 }}>선결제 계좌의 기존 잔액은 할인 혜택이 없는 1:1 충전금으로 취급합니다.</div>
           <div className="panel-note">신용카드: 결제할 때 카드로 지출을 기록하고, 카드값이 빠져나가면 은행 → 카드 이체로 기록하세요. 같은 소비가 두 번 잡히지 않습니다.</div>
         </section>
-
-        <section className="panel">
-          <h2>예산과 미래 자금 흐름</h2>
-          <div className="notice">다음 개발 단계: 급여 주기, 고정비, 예정 계좌 보충, 날짜별 잔액 예측을 구현할 예정입니다. 월별 지출·항목 통계는 '월별 내역' 탭에서 볼 수 있습니다.</div>
-        </section>
       </div>
-    </div>
-    </>}
+    </div>}
+
     <footer className="footer">초기 개인용 스캐폴드입니다. 인증을 구현하기 전에는 인터넷에 공개하지 마세요. 거래 수정·취소는 역거래로 기록됩니다. 환불·만료 및 자동 예측은 아직 지원되지 않습니다.</footer>
   </div>;
 }
