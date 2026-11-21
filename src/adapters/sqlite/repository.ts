@@ -6,6 +6,7 @@ import type {
   Account, AccountType, Dashboard, MonthlyReport, Replenishment, Transaction, TransactionAmendment, TransactionCommand, TransactionFilter,
 } from '@/domain/models';
 import type { LedgerRepository } from '@/domain/ports';
+import type { CategorizedKind } from '@/domain/categories';
 import { allocatePrepaidCost, kstToday, monthRange, nonnegativeKrw, positiveKrw, shortText, validateDate } from '@/domain/money';
 import { badRequest, conflict, notFound } from '@/lib/errors';
 
@@ -235,25 +236,35 @@ export class SqliteLedgerRepository implements LedgerRepository {
         COALESCE(-SUM(CASE WHEN e.account_id='SYS:income' THEN e.amount_krw END), 0) AS income
       FROM entries e JOIN transactions t ON t.id=e.transaction_id
       WHERE t.occurred_on >= ? AND t.occurred_on < ?`).get(from, to) as { spending: number; income: number };
-    const categories = this.db.prepare(`SELECT t.category, SUM(e.amount_krw) AS spending,
+    return {
+      month, spendingKrw: totals.spending, incomeKrw: totals.income, netKrw: totals.income - totals.spending,
+      categories: this.categoryTotals('SYS:expense', 1, from, to).map((c) => ({ category: c.category, spendingKrw: c.amount, count: c.count })),
+      incomeCategories: this.categoryTotals('SYS:income', -1, from, to).map((c) => ({ category: c.category, amountKrw: c.amount, count: c.count })),
+    };
+  }
+
+  listCategories(kind?: CategorizedKind): string[] {
+    const rows = this.db.prepare(`SELECT category, COUNT(*) AS uses FROM transactions
+      WHERE category IS NOT NULL AND category <> '' AND reverses_transaction_id IS NULL
+        ${kind ? 'AND kind = ?' : ''}
+      GROUP BY category ORDER BY uses DESC, category`).all(...(kind ? [kind] : [])) as Array<{ category: string }>;
+    return rows.map((r) => r.category);
+  }
+
+  /**
+   * Per-category totals of one system leg (SYS:expense or SYS:income) for a date range, ranked.
+   * `sign` turns the leg into a positive amount (income legs are negative). Categories that net
+   * to zero (fully cancelled) drop out; count excludes cancelled originals and reversal rows.
+   */
+  private categoryTotals(leg: 'SYS:expense' | 'SYS:income', sign: 1 | -1, from: string, to: string) {
+    return this.db.prepare(`SELECT t.category, ? * SUM(e.amount_krw) AS amount,
         SUM(CASE WHEN t.reverses_transaction_id IS NULL
                   AND NOT EXISTS (SELECT 1 FROM transactions r WHERE r.reverses_transaction_id=t.id)
                  THEN 1 ELSE 0 END) AS count
       FROM entries e JOIN transactions t ON t.id=e.transaction_id
-      WHERE e.account_id='SYS:expense' AND t.occurred_on >= ? AND t.occurred_on < ?
+      WHERE e.account_id=? AND t.occurred_on >= ? AND t.occurred_on < ?
       GROUP BY t.category HAVING SUM(e.amount_krw) <> 0
-      ORDER BY spending DESC, t.category IS NULL, t.category`).all(from, to) as Array<{ category: string | null; spending: number; count: number }>;
-    return {
-      month, spendingKrw: totals.spending, incomeKrw: totals.income, netKrw: totals.income - totals.spending,
-      categories: categories.map((c) => ({ category: c.category, spendingKrw: c.spending, count: c.count })),
-    };
-  }
-
-  listCategories(): string[] {
-    const rows = this.db.prepare(`SELECT category, COUNT(*) AS uses FROM transactions
-      WHERE category IS NOT NULL AND category <> '' AND reverses_transaction_id IS NULL
-      GROUP BY category ORDER BY uses DESC, category`).all() as Array<{ category: string }>;
-    return rows.map((r) => r.category);
+      ORDER BY amount DESC, t.category IS NULL, t.category`).all(sign, leg, from, to) as Array<{ category: string | null; amount: number; count: number }>;
   }
 
   cancelTransaction(id: string, idempotencyKey?: string): Transaction {

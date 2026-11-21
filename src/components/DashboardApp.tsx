@@ -5,7 +5,9 @@ import type { Account, AccountType, Dashboard, Transaction } from '@/domain/mode
 import AmountInput from './AmountInput';
 import MonthlyView from './MonthlyView';
 import TransactionRow from './TransactionRow';
-import { CATEGORY_OPTIONS_ID, jsonRequest, kindLabel, typeLabel, won } from './ui';
+import type { CategorizedKind } from '@/domain/categories';
+import CategoryPicker, { UsedCategoriesContext } from './CategoryPicker';
+import { jsonRequest, kindLabel, typeLabel, won } from './ui';
 
 type View = 'home' | 'add' | 'monthly' | 'accounts';
 const TABS: Array<[View, string]> = [['home', '홈'], ['add', '입력'], ['monthly', '월별 내역'], ['accounts', '계좌']];
@@ -14,7 +16,7 @@ const viewFromHash = (hash: string): View => TABS.find(([id]) => id !== 'home' &
 export default function DashboardApp() {
   const [view, setView] = useState<View>('home');
   const [refreshKey, setRefreshKey] = useState(0);
-  const [categories, setCategories] = useState<string[]>([]);
+  const [usedCategories, setUsedCategories] = useState<Record<CategorizedKind, string[]>>({ income: [], expense: [] });
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -41,12 +43,13 @@ export default function DashboardApp() {
   const [editName, setEditName] = useState('');
 
   const load = useCallback(async () => {
-    const [data, cats] = await Promise.all([
+    const [data, income, expense] = await Promise.all([
       jsonRequest<Dashboard>('/api/dashboard'),
-      jsonRequest<{ categories: string[] }>('/api/categories'),
+      jsonRequest<{ categories: string[] }>('/api/categories?kind=income'),
+      jsonRequest<{ categories: string[] }>('/api/categories?kind=expense'),
     ]);
     setDashboard(data);
-    setCategories(cats.categories);
+    setUsedCategories({ income: income.categories, expense: expense.categories });
   }, []);
 
   useEffect(() => {
@@ -176,7 +179,7 @@ export default function DashboardApp() {
   const archiveBlockedReason = (a: Account) =>
     a.balanceKrw !== 0 ? '잔액이 0원이어야 보관할 수 있습니다' : owesReplenishment(a.id) ? '보충이 남아 있어 보관할 수 없습니다' : '';
 
-  return <div className="container">
+  return <UsedCategoriesContext.Provider value={usedCategories}><div className="container">
     <header className="header">
       <div><div className="logo">내 가계부 <span style={{ fontSize: 18, color: '#e4be65' }}>✦</span></div><div className="subtitle">나의 돈 흐름을 한눈에</div></div>
       <div className="header-note">SQLite · 로컬 전용 MVP · 급여 주기 예측은 다음 단계</div>
@@ -186,7 +189,6 @@ export default function DashboardApp() {
       {TABS.map(([id, label]) => <button key={id} className="tab" role="tab" type="button" aria-selected={view === id} onClick={() => showView(id)}>{label}</button>)}
     </nav>
 
-    <datalist id={CATEGORY_OPTIONS_ID}>{categories.map((c) => <option key={c} value={c} />)}</datalist>
 
     {message && <div className="message" role="status">{message}</div>}
     {error && <div className="message error" role="alert">{error}</div>}
@@ -249,7 +251,7 @@ export default function DashboardApp() {
         <h2>수입 · 지출 · 이체</h2>
         <form onSubmit={createTransaction}>
           <div className="field"><label htmlFor="kind">거래 유형</label>
-            <select id="kind" value={kind} onChange={(e) => { setKind(e.target.value as typeof kind); setFromAccountId(''); setToAccountId(''); }}>
+            <select id="kind" value={kind} onChange={(e) => { setKind(e.target.value as typeof kind); setFromAccountId(''); setToAccountId(''); setCategory(''); }}>
               <option value="expense">지출</option><option value="income">수입</option><option value="transfer">계좌 간 이체</option><option value="prepaid_topup">할인 선결제 충전</option>
             </select>
           </div>
@@ -270,8 +272,8 @@ export default function DashboardApp() {
               <AmountInput id="amount" required placeholder="30,000" value={amount} onValueChange={setAmount} /></div>
             {kind === 'prepaid_topup' && <div className="field"><label htmlFor="face">충전 액면 금액 (원)</label>
               <AmountInput id="face" required placeholder="100,000" value={faceAmount} onValueChange={setFaceAmount} /></div>}
-            {(kind === 'expense' || kind === 'income') && <div className="field"><label htmlFor="category">항목 (선택)</label>
-              <input id="category" list={CATEGORY_OPTIONS_ID} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="식비, 급여..." /></div>}
+            {(kind === 'expense' || kind === 'income') && <div className="full">
+              <CategoryPicker key={kind} kind={kind} id="category" value={category} onChange={setCategory} /></div>}
             <div className="field full"><label htmlFor="note">메모 (선택)</label>
               <input id="note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="거래 내용" /></div>
           </div>
@@ -348,5 +350,5 @@ export default function DashboardApp() {
     </div>}
 
     <footer className="footer">초기 개인용 스캐폴드입니다. 인증을 구현하기 전에는 인터넷에 공개하지 마세요. 거래 수정·취소는 역거래로 기록됩니다. 환불·만료 및 자동 예측은 아직 지원되지 않습니다.</footer>
-  </div>;
+  </div></UsedCategoriesContext.Provider>;
 }

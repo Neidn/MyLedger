@@ -1,6 +1,7 @@
 import type {
   Account, AccountType, Dashboard, MonthlyReport, Replenishment, Transaction, TransactionAmendment, TransactionCommand, TransactionFilter,
 } from './models';
+import type { CategorizedKind } from './categories';
 
 /** DB-agnostic repository contract. Neither routes nor domain import SQLite/pg. */
 export interface LedgerRepository {
@@ -15,8 +16,8 @@ export interface LedgerRepository {
   postTransaction(command: TransactionCommand, idempotencyKey?: string): Transaction;
   listTransactions(filter?: TransactionFilter): Transaction[];
   getMonthlyReport(month: string): MonthlyReport;
-  /** Categories in use, most used first — for input suggestions. */
-  listCategories(): string[];
+  /** Categories in use, most used first — for input suggestions; optionally only income or spending. */
+  listCategories(kind?: CategorizedKind): string[];
   /** Records a reversal (same kind, negated entries, original date). Returns the reversal. */
   cancelTransaction(id: string, idempotencyKey?: string): Transaction;
   /** Reverses the original and posts a corrected copy atomically. Returns the replacement. */

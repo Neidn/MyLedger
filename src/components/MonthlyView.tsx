@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { MonthlyReport, Transaction } from '@/domain/models';
+import type { CategoryIncome, MonthlyReport, Transaction } from '@/domain/models';
 import { kstMonth } from '@/domain/money';
 import TransactionRow from './TransactionRow';
 import { jsonRequest, won } from './ui';
@@ -22,6 +22,42 @@ function shiftMonth(month: string, delta: number): string {
 
 const monthLabel = (month: string) => `${month.slice(0, 4)}년 ${Number(month.slice(5))}월`;
 const UNCATEGORISED = '미분류';
+
+type BarsProps = {
+  /** '지출' or '수입', used in labels. */
+  of: string;
+  total: number;
+  rows: CategoryIncome[];
+  /** Filter the transaction list to a category. */
+  onPick: (category: string) => void;
+  /** Income bars use their own hue so the two charts aren't confused. */
+  income?: boolean;
+};
+
+/**
+ * Ranked horizontal bars, one hue per chart (spending #a8792a 3.87:1, income #3f7d64 4.85:1
+ * on white), 4px rounded ends on a light track. Name, count, share and amount are text, so the
+ * bar is never the only carrier of the number. Named categories are buttons that filter the list.
+ */
+function CategoryBars({ of, total, rows, onPick, income }: BarsProps) {
+  const top = rows[0]?.amountKrw || 0;
+  return <>{rows.map((c) => {
+    const name = c.category ?? UNCATEGORISED;
+    const share = total > 0 ? Math.round((c.amountKrw / total) * 100) : 0;
+    const width = top > 0 ? Math.max(2, (c.amountKrw / top) * 100) : 0;
+    const body = <>
+      <div className="cat-head">
+        <span>{name} <span className="list-sub">· {c.count}건 · {share}%</span></span>
+        <span className="money">{won(c.amountKrw)}</span>
+      </div>
+      <div className="cat-track" aria-hidden="true"><div className={`cat-fill ${income ? 'income' : ''}`} style={{ width: `${width}%` }} /></div>
+    </>;
+    const title = `${name} · ${won(c.amountKrw)} · ${c.count}건 · ${of}의 ${share}%`;
+    return c.category
+      ? <button key={name} type="button" className="cat-row" title={`${title} — 눌러서 이 항목만 보기`} onClick={() => onPick(c.category!)}>{body}</button>
+      : <div key={name} className="cat-row" title={title}>{body}</div>;
+  })}</>;
+}
 
 /** Month at a glance: totals, spending by category, and the month's transactions with search. */
 export default function MonthlyView({ busy, refreshKey, onCancel, onAmend }: Props) {
@@ -54,7 +90,6 @@ export default function MonthlyView({ busy, refreshKey, onCancel, onAmend }: Pro
   }, [month, debouncedQuery, refreshKey]);
 
   const isCurrent = month === kstMonth();
-  const top = report?.categories[0]?.spendingKrw || 0;
 
   return <>
     <section className="panel month-nav" aria-label="월 선택">
@@ -75,27 +110,21 @@ export default function MonthlyView({ busy, refreshKey, onCancel, onAmend }: Pro
     </section>
 
     <div className="columns top">
-      <section className="panel">
-        <h2>항목별 지출</h2>
-        {report && report.categories.length === 0 && <div className="empty">이 달의 지출이 없습니다.</div>}
-        {report?.categories.map((c) => {
-          const name = c.category ?? UNCATEGORISED;
-          const share = report.spendingKrw > 0 ? Math.round((c.spendingKrw / report.spendingKrw) * 100) : 0;
-          const width = top > 0 ? Math.max(2, (c.spendingKrw / top) * 100) : 0;
-          const body = <>
-            <div className="cat-head">
-              <span>{name} <span className="list-sub">· {c.count}건 · {share}%</span></span>
-              <span className="money">{won(c.spendingKrw)}</span>
-            </div>
-            <div className="cat-track" aria-hidden="true"><div className="cat-fill" style={{ width: `${width}%` }} /></div>
-          </>;
-          const title = `${name} · ${won(c.spendingKrw)} · ${c.count}건 · 지출의 ${share}%`;
-          return c.category
-            ? <button key={name} type="button" className="cat-row" title={`${title} — 눌러서 이 항목만 보기`} onClick={() => setQuery(c.category!)}>{body}</button>
-            : <div key={name} className="cat-row" title={title}>{body}</div>;
-        })}
-        <div className="panel-note" style={{ marginTop: 12 }}>카드 결제는 결제한 날 지출로 잡히고, 카드값 납부·이체·선결제 충전은 지출이 아닙니다. 취소한 거래는 원래 날짜에서 상쇄됩니다.</div>
-      </section>
+      <div>
+        <section className="panel">
+          <h2>항목별 지출</h2>
+          {report && report.categories.length === 0 && <div className="empty">이 달의 지출이 없습니다.</div>}
+          {report && <CategoryBars of="지출" total={report.spendingKrw} onPick={setQuery}
+            rows={report.categories.map((c) => ({ category: c.category, amountKrw: c.spendingKrw, count: c.count }))} />}
+          <div className="panel-note" style={{ marginTop: 12 }}>카드 결제는 결제한 날 지출로 잡히고, 카드값 납부·이체·선결제 충전은 지출이 아닙니다. 취소한 거래는 원래 날짜에서 상쇄됩니다.</div>
+        </section>
+
+        <section className="panel">
+          <h2>항목별 수입</h2>
+          {report && report.incomeCategories.length === 0 && <div className="empty">이 달의 수입이 없습니다.</div>}
+          {report && <CategoryBars of="수입" total={report.incomeKrw} onPick={setQuery} rows={report.incomeCategories} income />}
+        </section>
+      </div>
 
       <section className="panel">
         <h2>거래 내역</h2>

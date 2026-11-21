@@ -3,7 +3,8 @@
 import { useState, type FormEvent } from 'react';
 import type { Transaction } from '@/domain/models';
 import AmountInput from './AmountInput';
-import { CATEGORY_OPTIONS_ID, enteredAmounts, kindLabel, won } from './ui';
+import CategoryPicker from './CategoryPicker';
+import { enteredAmounts, kindLabel, won } from './ui';
 
 type Props = {
   t: Transaction;
@@ -62,8 +63,8 @@ export default function TransactionRow({ t, busy, onCancel, onAmend }: Props) {
               <AmountInput id={`tx-amount-${t.id}`} required value={amount} onValueChange={setAmount} /></div>
             {t.kind === 'prepaid_topup' && <div className="field"><label htmlFor={`tx-face-${t.id}`}>충전 액면 금액 (원)</label>
               <AmountInput id={`tx-face-${t.id}`} required value={face} onValueChange={setFace} /></div>}
-            {(t.kind === 'income' || t.kind === 'expense') && <div className="field"><label htmlFor={`tx-cat-${t.id}`}>항목</label>
-              <input id={`tx-cat-${t.id}`} list={CATEGORY_OPTIONS_ID} value={category} onChange={(e) => setCategory(e.target.value)} /></div>}
+            {(t.kind === 'income' || t.kind === 'expense') && <div className="full">
+              <CategoryPicker kind={t.kind} id={`tx-cat-${t.id}`} label="항목" value={category} onChange={setCategory} /></div>}
             <div className="field"><label htmlFor={`tx-date-${t.id}`}>날짜</label>
               <input id={`tx-date-${t.id}`} type="date" required value={date} onChange={(e) => setDate(e.target.value)} /></div>
             <div className="field full"><label htmlFor={`tx-note-${t.id}`}>메모</label>

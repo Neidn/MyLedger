@@ -68,6 +68,15 @@ export interface MonthlyReport {
   netKrw: number;
   /** Ranked by spending, largest first. */
   categories: CategorySpending[];
+  /** Income by category, ranked largest first. */
+  incomeCategories: CategoryIncome[];
+}
+
+export interface CategoryIncome {
+  /** null = no category entered. */
+  category: string | null;
+  amountKrw: number;
+  count: number;
 }
 
 /** Fields a correction may change; everything else (kind, accounts) comes from the original. */

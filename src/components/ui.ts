@@ -7,8 +7,6 @@ export const kindLabel: Record<TransactionKind, string> = {
   prepaid_topup: '할인 충전', replenishment_repayment: '계좌 보충',
 };
 
-/** Shared <datalist> id for category suggestions. */
-export const CATEGORY_OPTIONS_ID = 'category-options';
 
 /** Amounts as entered, recovered from the user-account entries (system legs are not listed). */
 export function enteredAmounts(t: Transaction): { amount: number; face?: number } {

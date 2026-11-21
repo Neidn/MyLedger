@@ -86,7 +86,7 @@ test('monthly report: editing a date moves the spending between months', () => w
 }));
 
 test('monthly report: empty month and invalid month', () => withRepo((repo) => {
-  assert.deepEqual(repo.getMonthlyReport('2026-01'), { month: '2026-01', spendingKrw: 0, incomeKrw: 0, netKrw: 0, categories: [] });
+  assert.deepEqual(repo.getMonthlyReport('2026-01'), { month: '2026-01', spendingKrw: 0, incomeKrw: 0, netKrw: 0, categories: [], incomeCategories: [] });
   assert.throws(() => repo.getMonthlyReport('2026-13'), isStatus(400));
 }));
 
@@ -107,4 +107,30 @@ test('listTransactions: month filter and text search over note and category', ()
 test('listCategories: most used first, cancellations not counted twice', () => withRepo((repo) => {
   seedNovember(repo);
   assert.deepEqual(repo.listCategories(), ['식비', '교통', '급여', '쇼핑']);
+}));
+
+test('listCategories: filtered to income or spending', () => withRepo((repo) => {
+  seedNovember(repo);
+  assert.deepEqual(repo.listCategories('expense'), ['식비', '교통', '쇼핑']);
+  assert.deepEqual(repo.listCategories('income'), ['급여']);
+}));
+
+test('monthly report: income by category, ranked, cancelled income dropped', () => withRepo((repo) => {
+  const bank = repo.createAccount({ name: '생활비', type: 'bank', openingBalanceKrw: 0 });
+  const post = repo.postTransaction.bind(repo);
+  post({ kind: 'income', accountId: bank.id, amountKrw: 3_000_000, category: '급여', occurredOn: '2026-11-25' });
+  post({ kind: 'income', accountId: bank.id, amountKrw: 200_000, category: '부업', occurredOn: '2026-11-03' });
+  post({ kind: 'income', accountId: bank.id, amountKrw: 150_000, category: '부업', occurredOn: '2026-11-17' });
+  post({ kind: 'income', accountId: bank.id, amountKrw: 5_000, occurredOn: '2026-11-04' });
+  const typo = post({ kind: 'income', accountId: bank.id, amountKrw: 1_000, category: '용돈', occurredOn: '2026-11-05' });
+  repo.cancelTransaction(typo.id);
+  post({ kind: 'income', accountId: bank.id, amountKrw: 9_999, category: '급여', occurredOn: '2026-10-25' });
+
+  const report = repo.getMonthlyReport('2026-11');
+  assert.equal(report.incomeKrw, 3_355_000);
+  assert.deepEqual(report.incomeCategories, [
+    { category: '급여', amountKrw: 3_000_000, count: 1 },
+    { category: '부업', amountKrw: 350_000, count: 2 },
+    { category: null, amountKrw: 5_000, count: 1 },
+  ]);
 }));

@@ -66,6 +66,14 @@ button.cat-row:hover .cat-fill, button.cat-row:focus-visible .cat-fill { backgro
 .cat-head { display:flex; justify-content:space-between; gap:10px; font-size:14px; }
 .cat-track { height:8px; background:#f4f0e5; border-radius:4px; margin-top:6px; overflow:hidden; }
 .cat-fill { height:100%; background:#a8792a; border-radius:4px; }
+.cat-fill.income { background:#3f7d64; }
+button.cat-row:hover .cat-fill.income, button.cat-row:focus-visible .cat-fill.income { background:#2f604c; }
+/* Category chips: one tap to choose; 기타 opens a text box. */
+.field-label { color:#686760; font-size:12px; }
+.chips { display:flex; flex-wrap:wrap; gap:6px; }
+.chip { border:1px solid #e3dfd3; background:#fff; color:#4f4c44; border-radius:999px; padding:6px 11px; font-size:13px; line-height:1.2; }
+.chip[aria-pressed="true"] { background:#f1d78d; border-color:#e4c46f; color:#4b402c; font-weight:700; }
+.chips + input { margin-top:6px; }
 .row-inline { display:flex; gap:8px; align-items:end; flex-wrap:wrap; }
 .row-inline .field { flex:1; min-width:110px; }
 .notice { background:#fff8e7; color:#84683f; font-size:12px; border-radius:11px; padding:10px 12px; margin:10px 0 0; }

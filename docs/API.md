@@ -63,9 +63,13 @@
 - 취소(역거래)는 원래 날짜로 기록되므로 그 달 안에서 상쇄된다. 합이 0인 항목은 `categories`에서 빠진다.
 - `categories`는 지출 큰 순. `category: null`은 미분류. `count`는 취소되지 않은 원거래 수.
 
-### `GET /api/categories`
+### `GET /api/categories?kind=income|expense`
 
-사용 중인 항목 이름을 많이 쓴 순으로 반환(입력 자동완성용). 취소 기록은 세지 않는다. `{ "categories": ["식비", "교통"] }`
+사용 중인 항목 이름을 많이 쓴 순으로 반환. 취소 기록은 세지 않는다. `kind`를 주면 그 유형(수입/지출) 거래의 항목만, 그 외 값은 400. `{ "categories": ["식비", "교통"] }`
+
+화면의 항목 선택은 `src/domain/categories.ts`의 **기본 항목**(지출 18개, 수입 7개, 고정 순서) 뒤에 이 목록 중 기본에 없는 이름을 붙여 칩으로 보여주고, `기타 (직접 입력)`으로 새 이름을 입력한다. 항목은 여전히 거래의 텍스트 필드라 DB 변경은 없다.
+
+월별 리포트(`GET /api/reports/monthly`)는 `incomeCategories: [{ category, amountKrw, count }]`(수입 항목별 합계, 큰 순)도 반환한다.
 
 ### `POST /api/transactions`
 
