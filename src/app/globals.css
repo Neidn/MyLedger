@@ -74,6 +74,8 @@ button.cat-row:hover .cat-fill.income, button.cat-row:focus-visible .cat-fill.in
 .chip { border:1px solid #e3dfd3; background:#fff; color:#4f4c44; border-radius:999px; padding:6px 11px; font-size:13px; line-height:1.2; }
 .chip[aria-pressed="true"] { background:#f1d78d; border-color:#e4c46f; color:#4b402c; font-weight:700; }
 .chips + input { margin-top:6px; }
+.list-summary { display:flex; justify-content:space-between; gap:10px; font-size:13px; color:#77746e; padding:6px 0 8px; border-bottom:1px solid #f0eee7; }
+.list-summary strong { color:#2d2d2b; }
 .row-inline { display:flex; gap:8px; align-items:end; flex-wrap:wrap; }
 .row-inline .field { flex:1; min-width:110px; }
 .notice { background:#fff8e7; color:#84683f; font-size:12px; border-radius:11px; padding:10px 12px; margin:10px 0 0; }

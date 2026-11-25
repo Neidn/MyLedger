@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import type {
   Account, AccountType, Dashboard, MonthlyReport, Replenishment, Transaction, TransactionAmendment, TransactionCommand, TransactionFilter,
 } from '@/domain/models';
+import { TRANSACTION_TYPE_KINDS } from '@/domain/models';
 import type { LedgerRepository } from '@/domain/ports';
 import type { CategorizedKind } from '@/domain/categories';
 import { allocatePrepaidCost, kstToday, monthRange, nonnegativeKrw, positiveKrw, shortText, validateDate } from '@/domain/money';
@@ -214,6 +215,12 @@ export class SqliteLedgerRepository implements LedgerRepository {
       const [from, to] = this.monthBounds(filter.month);
       where.push('occurred_on >= ? AND occurred_on < ?');
       params.push(from, to);
+    }
+    if (filter.type !== undefined) {
+      const kinds = Object.hasOwn(TRANSACTION_TYPE_KINDS, filter.type) ? TRANSACTION_TYPE_KINDS[filter.type] : null;
+      if (!kinds) badRequest('type은 income, expense, other 중 하나여야 합니다.');
+      where.push(`kind IN (${kinds.map(() => '?').join(',')})`);
+      params.push(...kinds);
     }
     const query = filter.query?.trim();
     if (query) {

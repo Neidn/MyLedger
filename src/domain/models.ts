@@ -40,11 +40,22 @@ export interface Transaction {
   reversedByTransactionId: string | null;
 }
 
+/** List grouping for filters: spending, income, or everything that moves money without being either. */
+export type TransactionType = 'income' | 'expense' | 'other';
+
+export const TRANSACTION_TYPE_KINDS: Record<TransactionType, readonly TransactionKind[]> = {
+  income: ['income'],
+  expense: ['expense'],
+  other: ['transfer', 'prepaid_topup', 'replenishment_repayment', 'opening'],
+};
+
 export interface TransactionFilter {
   /** 'YYYY-MM': only transactions dated in that month. */
   month?: string;
   /** Case-insensitive substring of the note or category. */
   query?: string;
+  /** income / expense, or other = transfers, top-ups, repayments, opening balances. */
+  type?: TransactionType;
   limit?: number;
 }
 

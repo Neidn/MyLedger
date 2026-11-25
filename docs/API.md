@@ -46,9 +46,9 @@
 
 잘못 만든 계좌 삭제. `deletable`(초기 잔액 외 거래·보충 연결 없음)일 때만 허용하며, 해당 개시 거래와 개시 lot도 함께 삭제한다. 거래가 있으면 409 — 대신 보관한다. 응답: `{ "deletedId": "uuid" }`.
 
-### `GET /api/transactions?limit=50&month=YYYY-MM&q=검색어`
+### `GET /api/transactions?limit=50&month=YYYY-MM&q=검색어&type=expense`
 
-최신 거래와 계좌 이동을 반환한다(날짜 내림차순). `limit` 기본 50, 최대 500. `month`는 그 달(`occurred_on`)만, `q`는 메모·항목 부분 일치(LIKE 와일드카드는 문자 그대로). 잘못된 `month`는 400.
+최신 거래와 계좌 이동을 반환한다(날짜 내림차순). `limit` 기본 50, 최대 500. `month`는 그 달(`occurred_on`)만, `q`는 메모·항목 부분 일치(LIKE 와일드카드는 문자 그대로). `type`: `expense`(지출), `income`(수입), `other`(이체·선결제 충전·보충·초기 잔액). 취소 기록은 원거래와 같은 유형이라 같은 목록에 나오므로, `expense`/`income` 목록의 항목 합은 월별 리포트의 지출/수입과 일치한다. 잘못된 `month`/`type`은 400.
 
 ### `GET /api/reports/monthly?month=YYYY-MM`
 

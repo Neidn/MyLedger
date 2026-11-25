@@ -104,6 +104,24 @@ test('listTransactions: month filter and text search over note and category', ()
   assert.throws(() => repo.listTransactions({ month: 'nope' }), isStatus(400));
 }));
 
+test('listTransactions: type filter splits income, spending and the rest', () => withRepo((repo) => {
+  seedNovember(repo);
+  const kinds = (type: 'income' | 'expense' | 'other') =>
+    [...new Set(repo.listTransactions({ month: '2026-11', type, limit: 500 }).map((t) => t.kind))].sort();
+
+  assert.deepEqual(kinds('expense'), ['expense']);
+  assert.deepEqual(kinds('income'), ['income']);
+  assert.deepEqual(kinds('other'), ['opening', 'prepaid_topup', 'transfer']);
+
+  // Cancelled spending and its reversal both stay under 지출, so the list sums to the report.
+  const spending = repo.listTransactions({ month: '2026-11', type: 'expense', limit: 500 });
+  const listed = -spending.flatMap((t) => t.entries ?? []).reduce((n, e) => n + e.amountKrw, 0);
+  assert.equal(listed, repo.getMonthlyReport('2026-11').spendingKrw);
+
+  assert.deepEqual(repo.listTransactions({ month: '2026-11', type: 'expense', query: '식비' }).map((t) => t.note).sort(), ['점심 김밥', '커피']);
+  assert.throws(() => repo.listTransactions({ type: 'bogus' as never }), isStatus(400));
+}));
+
 test('listCategories: most used first, cancellations not counted twice', () => withRepo((repo) => {
   seedNovember(repo);
   assert.deepEqual(repo.listCategories(), ['식비', '교통', '급여', '쇼핑']);

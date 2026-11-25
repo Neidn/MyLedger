@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getRepository } from '@/lib/repository';
-import type { TransactionCommand } from '@/domain/models';
+import type { TransactionCommand, TransactionType } from '@/domain/models';
 import { apiError, asObject } from '../_shared/http';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** Query: limit (default 50, max 500), month=YYYY-MM, q=text in note/category. */
+/** Query: limit (default 50, max 500), month=YYYY-MM, q=text in note/category, type=income|expense|other. */
 export function GET(request: NextRequest) {
   try {
     const params = request.nextUrl.searchParams;
@@ -13,6 +13,7 @@ export function GET(request: NextRequest) {
       limit: Number(params.get('limit') || 50),
       month: params.get('month') || undefined,
       query: params.get('q') || undefined,
+      type: (params.get('type') || undefined) as TransactionType | undefined,
     }) });
   } catch (error) { return apiError(error); }
 }
